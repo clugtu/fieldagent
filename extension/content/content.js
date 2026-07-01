@@ -27,7 +27,6 @@
   let inspectDebounceTimer = null
   let lastSnapshotUrl = null
   let inspectInProgress = false
-  let submitWatchedForm = null
 
   // ─── File attachment ────────────────────────────────────────────────────────
 
