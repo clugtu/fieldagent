@@ -17,14 +17,6 @@ it degrades gracefully when a site redesigns its form layout.
 
 ---
 
-## The Name
-
-- **Field agent** — an operative working out in the world, navigating
-  unfamiliar terrain, executing a mission handed down from HQ
-- **Field agent** — an AI agent that works in form *fields* on web pages
-
----
-
 ## Core Principles
 
 1. **The extension is an actuator, not a brain.** It extracts DOM state

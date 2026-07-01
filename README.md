@@ -7,9 +7,6 @@ logged into your own accounts and navigate normally. FieldAgent inspects
 the current page, figures out which fields need filling and with what,
 pre-populates them, and steps aside. You review and click Submit.
 
-The name is a double: a *field agent* operates out in the world and
-executes a mission — and this agent works in form *fields*.
-
 ---
 
 ## How it works
