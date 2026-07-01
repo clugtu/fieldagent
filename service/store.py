@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from threading import Lock
 
+from service.config import settings
 from service.models.schemas import Task, TaskStatus
 
 
@@ -62,4 +63,4 @@ class TaskStore:
         return [Task.model_validate_json(r["data"]) for r in rows]
 
 
-task_store = TaskStore()
+task_store = TaskStore(settings.db_path)
