@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+
 from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 

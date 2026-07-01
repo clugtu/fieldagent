@@ -1,5 +1,8 @@
 # FieldAgent
 
+[![CI](https://github.com/clugtu/fieldagent/actions/workflows/ci.yml/badge.svg)](https://github.com/clugtu/fieldagent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **An AI agent that fills in web forms — you direct it, you submit.**
 
 FieldAgent is a Chrome extension backed by an AI microservice. You stay

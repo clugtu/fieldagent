@@ -25,8 +25,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from typing_extensions import TypedDict
-
 from service.models.schemas import (
     DomSnapshot,
     FillInstruction,
@@ -34,26 +32,29 @@ from service.models.schemas import (
     Question,
     Task,
 )
+from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
 
 # ─── Graph state ─────────────────────────────────────────────────────────────
 
+
 class InspectorState(TypedDict):
     task_id: str
     task_payload: dict[str, Any]
     snapshot: dict[str, Any]
-    answer: str | None                  # injected by resume_with_answer()
+    answer: str | None  # injected by resume_with_answer()
     instructions: list[dict[str, Any]]
     question: dict[str, Any] | None
     step_complete: bool
     expect_next_page: bool
     notes: str
-    outcome: str                        # "instructions" | "awaiting_input" | "complete"
+    outcome: str  # "instructions" | "awaiting_input" | "complete"
     messages: Annotated[list, add_messages]
 
 
 # ─── LLM ─────────────────────────────────────────────────────────────────────
+
 
 def _llm() -> ChatAnthropic:
     return ChatAnthropic(model="claude-sonnet-4-6", temperature=0)
@@ -119,12 +120,20 @@ def analyze(state: InspectorState) -> dict:
         HumanMessage(content=context),
     ]
     response = _llm().invoke(msgs)
-    raw = response.content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    raw = (
+        response.content.strip()
+        .removeprefix("```json")
+        .removeprefix("```")
+        .removesuffix("```")
+        .strip()
+    )
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("[GRAPH] analyze: could not parse LLM response, defaulting to fill")
+        logger.warning(
+            "[GRAPH] analyze: could not parse LLM response, defaulting to fill"
+        )
         parsed = {"decision": "fill"}
 
     return {
@@ -166,7 +175,13 @@ def fill(state: InspectorState) -> dict:
         HumanMessage(content=context),
     ]
     response = _llm().invoke(msgs)
-    raw = response.content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    raw = (
+        response.content.strip()
+        .removeprefix("```json")
+        .removeprefix("```")
+        .removesuffix("```")
+        .strip()
+    )
 
     try:
         parsed = json.loads(raw)
@@ -189,7 +204,9 @@ def done(state: InspectorState) -> dict:
     result = state.get("_analyze_result", {})
     return {
         "outcome": "complete",
-        "notes": result.get("notes", "Page appears to be a success/confirmation state."),
+        "notes": result.get(
+            "notes", "Page appears to be a success/confirmation state."
+        ),
         "step_complete": True,
         "question": None,
     }
@@ -208,13 +225,17 @@ def _build_graph():
     g.add_node("done", done)
 
     g.add_edge(START, "analyze")
-    g.add_conditional_edges("analyze", route_after_analyze, {
-        "fill": "fill",
-        "ask":  "ask",
-        "done": "done",
-    })
+    g.add_conditional_edges(
+        "analyze",
+        route_after_analyze,
+        {
+            "fill": "fill",
+            "ask": "ask",
+            "done": "done",
+        },
+    )
     g.add_edge("fill", END)
-    g.add_edge("ask",  END)
+    g.add_edge("ask", END)
     g.add_edge("done", END)
 
     return g.compile(checkpointer=_checkpointer)
@@ -224,6 +245,7 @@ _graph = _build_graph()
 
 
 # ─── Public interface ─────────────────────────────────────────────────────────
+
 
 def _state_from_task_and_snapshot(task: Task, snapshot: DomSnapshot) -> InspectorState:
     return InspectorState(
@@ -248,9 +270,7 @@ def _state_to_response(task_id: str, final_state: dict) -> InspectResponse:
     if outcome == "awaiting_input" and final_state.get("question"):
         question = Question(**final_state["question"])
 
-    instructions = [
-        FillInstruction(**i) for i in final_state.get("instructions", [])
-    ]
+    instructions = [FillInstruction(**i) for i in final_state.get("instructions", [])]
 
     return InspectResponse(
         task_id=task_id,
@@ -263,7 +283,9 @@ def _state_to_response(task_id: str, final_state: dict) -> InspectResponse:
     )
 
 
-async def run_inspector(task: Task, snapshot: DomSnapshot) -> tuple[InspectResponse, str]:
+async def run_inspector(
+    task: Task, snapshot: DomSnapshot
+) -> tuple[InspectResponse, str]:
     """Run the graph from scratch. Returns (response, thread_id)."""
     thread_id = str(uuid4())
     config = {"configurable": {"thread_id": thread_id}}
@@ -290,7 +312,7 @@ async def resume_with_answer(task: Task, answer: str) -> InspectResponse:
 
     update = {
         "answer": answer,
-        "outcome": "",      # reset so analyze re-evaluates with the answer
+        "outcome": "",  # reset so analyze re-evaluates with the answer
         "question": None,
     }
     final = await _graph.ainvoke(update, config=config)

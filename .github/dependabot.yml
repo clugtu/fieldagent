@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # Python service dependencies
+  - package-ecosystem: pip
+    directory: /service
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      # LangChain family releases frequently together — one PR covers all
+      langchain:
+        patterns:
+          - "langchain*"
+          - "langgraph*"
+          - "anthropic*"
+    ignore:
+      # Don't auto-bump major versions — review those manually
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

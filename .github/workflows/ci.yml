@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  service:
+    name: Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: service/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r service/requirements.txt ruff
+
+      - name: Lint (ruff)
+        run: ruff check service/
+
+      - name: Format check (ruff)
+        run: ruff format --check service/
+
+      - name: Import check
+        run: |
+          cd service
+          python -c "from main import app; print('Service imports OK')"
+        env:
+          ANTHROPIC_API_KEY: placeholder
+          FIELDAGENT_API_KEYS: placeholder
+
+  extension:
+    name: Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate manifest
+        run: python -c "
+import json, sys
+with open('extension/manifest.json') as f:
+    m = json.load(f)
+assert m['manifest_version'] == 3, 'must be MV3'
+assert 'background' in m
+assert 'content_scripts' in m
+print('manifest.json OK')
+"

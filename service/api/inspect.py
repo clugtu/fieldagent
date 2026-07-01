@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-
 from service.agents.inspector import resume_with_answer, run_inspector
 from service.auth import require_api_key
 from service.models.schemas import (

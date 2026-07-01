@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from service.api import assets as assets_router
 from service.api import inspect as inspect_router
 from service.api import tasks as tasks_router
@@ -22,7 +21,7 @@ async def lifespan(app: FastAPI):
     if not settings.api_keys:
         key = secrets.token_urlsafe(32)
         register_key(key)
-        print(f"\n[FieldAgent] No API keys configured. Generated a bootstrap key:")
+        print("\n[FieldAgent] No API keys configured. Generated a bootstrap key:")
         print(f"  {key}")
         print("  Set FIELDAGENT_API_KEYS=<key> in .env to make it persistent.\n")
     else:

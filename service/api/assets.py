@@ -6,7 +6,6 @@ from __future__ import annotations
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-
 from service.auth import require_api_key
 from service.store import task_store
 

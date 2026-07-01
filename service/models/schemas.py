@@ -27,9 +27,10 @@ class TaskPlatform(str, Enum):
 
 class MediaAsset(BaseModel):
     """A media file the extension should download and attach to a file input."""
+
     asset_id: str = Field(default_factory=lambda: str(uuid4()))
-    url: str                    # where the service can fetch it
-    filename: str               # hint for the File object
+    url: str  # where the service can fetch it
+    filename: str  # hint for the File object
     mime_type: str = "application/octet-stream"
 
 
@@ -46,10 +47,11 @@ class TaskPayload(BaseModel):
 
 class Question(BaseModel):
     """A structured question the agent poses when it cannot proceed unambiguously."""
+
     question_id: str = Field(default_factory=lambda: str(uuid4()))
-    text: str                           # human-readable question
+    text: str  # human-readable question
     options: list[str] = Field(default_factory=list)  # suggested answers, if any
-    context: str = ""                   # why the agent is asking
+    context: str = ""  # why the agent is asking
     asked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -61,7 +63,7 @@ class Task(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid4()))
     payload: TaskPayload
     status: TaskStatus = TaskStatus.pending
-    question: Question | None = None    # set when status == awaiting_input
+    question: Question | None = None  # set when status == awaiting_input
     graph_thread_id: str | None = None  # LangGraph checkpoint thread
     result_url: str | None = None
     error: str | None = None
@@ -102,8 +104,8 @@ class FillInstruction(BaseModel):
     selector_hint: str
     fallback_hint: str
     value: str
-    action: str = "type"              # "type" | "select" | "focus" | "attach_file"
-    asset_id: str | None = None       # set when action == "attach_file"
+    action: str = "type"  # "type" | "select" | "focus" | "attach_file"
+    asset_id: str | None = None  # set when action == "attach_file"
 
 
 class InspectRequest(BaseModel):
@@ -113,7 +115,7 @@ class InspectRequest(BaseModel):
 
 class InspectResponse(BaseModel):
     task_id: str
-    status: str                       # "instructions" | "awaiting_input" | "complete"
+    status: str  # "instructions" | "awaiting_input" | "complete"
     instructions: list[FillInstruction] = Field(default_factory=list)
     question: Question | None = None  # set when status == "awaiting_input"
     step_complete: bool = False

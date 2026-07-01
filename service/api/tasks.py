@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-
+from service.auth import require_api_key
 from service.models.schemas import (
     CompleteTaskRequest,
     CreateTaskRequest,
@@ -11,7 +11,6 @@ from service.models.schemas import (
     TaskStatus,
 )
 from service.store import task_store
-from service.auth import require_api_key
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 

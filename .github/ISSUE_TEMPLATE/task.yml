@@ -1,0 +1,36 @@
+name: Task
+description: A planned piece of work from the backlog.
+labels: ["task"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs to be done
+      description: Clear description of the work and its goal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Done when
+      description: How do we know this is complete?
+      placeholder: |
+        - [ ] ...
+        - [ ] CI passes
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - extension
+        - service
+        - agent
+        - ci-cd
+        - docs
+        - other
+    validations:
+      required: true
