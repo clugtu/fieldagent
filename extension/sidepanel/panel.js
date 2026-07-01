@@ -113,7 +113,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
 btnReinspect.addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (tab) chrome.tabs.sendMessage(tab.id, { type: 'INSPECT_NOW' })
+  if (tab) chrome.tabs.sendMessage(tab.id, { type: 'INSPECT_NOW' }).catch(() => {})
 })
 
 btnClear.addEventListener('click', () => {

@@ -1,14 +1,12 @@
 /**
  * FieldAgent Content Script
  *
- * Runs on target social platform pages. Responsibilities:
+ * Runs on target pages. Responsibilities:
  * - Extract a semantic DOM snapshot via FieldAgentUtils (lib/dom-utils.js)
- * - Apply fill instructions from the service worker (text + file attachment)
+ * - Call the FieldAgent service /inspect endpoint directly (avoids MV3 service
+ *   worker lifetime limits — inference takes 5-10s, longer than SW stays alive)
+ * - Apply fill instructions from the service
  * - Watch for significant DOM mutations (multi-step navigation) and re-inspect
- * - Surface agent questions in the side panel via the service worker
- *
- * lib/dom-utils.js is injected before this file (see manifest.json) and
- * exposes pure DOM utilities on window.FieldAgentUtils.
  */
 
 ;(function () {
@@ -16,8 +14,6 @@
 
   const { extractSnapshot, applyInstruction } = window.FieldAgentUtils
 
-  // Derive a readable platform hint from the hostname — used by the agent
-  // to understand context, not to gate which sites the extension runs on.
   const HOSTNAME_HINTS = {
     'www.facebook.com': 'facebook',
     'www.instagram.com': 'instagram',
@@ -30,6 +26,7 @@
   const platform = HOSTNAME_HINTS[window.location.hostname] || window.location.hostname
   let inspectDebounceTimer = null
   let lastSnapshotUrl = null
+  let inspectInProgress = false
 
   // ─── File attachment ────────────────────────────────────────────────────────
 
@@ -74,16 +71,54 @@
     }
   }
 
-  // ─── Inspect + respond cycle ────────────────────────────────────────────────
+  // ─── Inspect + fill cycle ───────────────────────────────────────────────────
+  // Calls /inspect directly to avoid MV3 service worker lifetime limits.
 
-  function requestInspect() {
-    const snapshot = extractSnapshot(platform)
-    chrome.runtime.sendMessage({ type: 'SNAPSHOT_READY', snapshot }, async (response) => {
-      if (!response || response.type === 'NO_TASK') return
-      if (response.type === 'INSTRUCTIONS') {
-        await applyInstructions(response.payload.instructions, response.payload.task_id)
+  async function requestInspect() {
+    if (inspectInProgress) return
+    inspectInProgress = true
+    try {
+      // Read active task directly from local storage — avoids service worker
+      // cold-start race that causes GET_ACTIVE_TASK to lose the message channel
+      const { activeTask: task } = await new Promise((resolve) =>
+        chrome.storage.local.get('activeTask', resolve)
+      )
+      if (!task) return
+
+      const snapshot = extractSnapshot(platform)
+
+      // Route the /inspect call through the service worker via a persistent port
+      // connection. Content scripts on HTTPS pages can't fetch HTTP (mixed
+      // content), but the service worker (chrome-extension:// origin) can.
+      // An open port keeps the service worker alive during the ~5-10s inference.
+      const result = await new Promise((resolve, reject) => {
+        let settled = false
+        const port = chrome.runtime.connect({ name: 'inspect' })
+
+        port.onMessage.addListener((msg) => {
+          settled = true
+          port.disconnect()
+          if (msg.error) reject(new Error(msg.error))
+          else resolve(msg)
+        })
+
+        port.onDisconnect.addListener(() => {
+          if (!settled) reject(new Error('Service worker disconnected before responding'))
+        })
+
+        port.postMessage({ type: 'INSPECT', taskId: task.task_id, snapshot })
+      })
+
+      // Notify side panel so it can display the instructions
+      chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
+
+      // Apply instructions to the page
+      if (result?.instructions?.length) {
+        await applyInstructions(result.instructions, task.task_id)
       }
-    })
+    } finally {
+      inspectInProgress = false
+    }
   }
 
   function scheduleInspect(delayMs = 800) {
@@ -96,27 +131,19 @@
     }, delayMs)
   }
 
-  // ─── MutationObserver for multi-step navigation ─────────────────────────────
-
-  let significantMutationCount = 0
-  const observer = new MutationObserver((mutations) => {
-    const significant = mutations.filter((m) => m.type === 'childList' && m.addedNodes.length > 3)
-    if (significant.length > 0) {
-      significantMutationCount++
-      if (significantMutationCount >= 3) {
-        significantMutationCount = 0
-        scheduleInspect(1200)
-      }
-    }
-  })
-  observer.observe(document.body, { childList: true, subtree: true })
-
-  // ─── Messages from service worker ──────────────────────────────────────────
+  // ─── Only inspect when explicitly triggered ─────────────────────────────────
+  // Auto-inspect on page load only fires once. After that, only respond to
+  // explicit INSPECT_NOW from the side panel. No MutationObserver polling —
+  // the user clicked Re-inspect if they want another pass.
 
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'INSPECT_NOW') scheduleInspect(300)
+    if (message.type === 'INSPECT_NOW') {
+      lastSnapshotUrl = null // force re-inspect even if URL hasn't changed
+      scheduleInspect(300)
+    }
   })
 
+  // Single auto-inspect on page load (handles initial task acquisition)
   scheduleInspect(1000)
 
   console.log(`[FieldAgent] Content script active on ${platform}`)
