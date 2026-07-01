@@ -51,6 +51,7 @@ class InspectorState(TypedDict):
     notes: str
     outcome: str  # "instructions" | "awaiting_input" | "complete"
     messages: Annotated[list, add_messages]
+    _analyze_result: dict[str, Any]  # internal: decision from analyze node
 
 
 # ─── LLM ─────────────────────────────────────────────────────────────────────
@@ -250,8 +251,8 @@ _graph = _build_graph()
 def _state_from_task_and_snapshot(task: Task, snapshot: DomSnapshot) -> InspectorState:
     return InspectorState(
         task_id=task.task_id,
-        task_payload=task.payload.model_dump(),
-        snapshot=snapshot.model_dump(),
+        task_payload=task.payload.model_dump(mode="json"),
+        snapshot=snapshot.model_dump(mode="json"),
         answer=None,
         instructions=[],
         question=None,
@@ -260,7 +261,7 @@ def _state_from_task_and_snapshot(task: Task, snapshot: DomSnapshot) -> Inspecto
         notes="",
         outcome="",
         messages=[],
-        _analyze_result={},
+        _analyze_result={},  # type: ignore[typeddict-item]
     )
 
 
