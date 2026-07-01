@@ -16,7 +16,9 @@
 
   const { extractSnapshot, applyInstruction } = window.FieldAgentUtils
 
-  const PLATFORM_MAP = {
+  // Derive a readable platform hint from the hostname — used by the agent
+  // to understand context, not to gate which sites the extension runs on.
+  const HOSTNAME_HINTS = {
     'www.facebook.com': 'facebook',
     'www.instagram.com': 'instagram',
     'www.pinterest.com': 'pinterest',
@@ -25,7 +27,7 @@
     'www.linkedin.com': 'linkedin',
   }
 
-  const platform = PLATFORM_MAP[window.location.hostname] || 'unknown'
+  const platform = HOSTNAME_HINTS[window.location.hostname] || window.location.hostname
   let inspectDebounceTimer = null
   let lastSnapshotUrl = null
 
