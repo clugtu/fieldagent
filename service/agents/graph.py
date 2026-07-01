@@ -19,7 +19,7 @@ import json
 from typing import Annotated, Any
 from uuid import uuid4
 
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -58,9 +58,11 @@ class InspectorState(TypedDict):
 # ─── LLM ─────────────────────────────────────────────────────────────────────
 
 
-def _llm() -> ChatAnthropic:
-    return ChatAnthropic(
-        model="claude-sonnet-4-6", temperature=0, api_key=settings.anthropic_api_key
+def _llm():
+    return init_chat_model(
+        settings.llm_model,
+        model_provider=settings.llm_provider,
+        temperature=0,
     )
 
 

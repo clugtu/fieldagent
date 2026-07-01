@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,14 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Propagate LLM API key from pydantic-settings into os.environ so that
+    # LangChain's init_chat_model can discover it via its standard env-var lookup.
+    # (pydantic-settings reads .env into the Settings object, not os.environ.)
+    if settings.anthropic_api_key:
+        os.environ.setdefault("ANTHROPIC_API_KEY", settings.anthropic_api_key)
+
+    logger.info("LLM: provider=%s model=%s", settings.llm_provider, settings.llm_model)
+
     if not settings.api_keys:
         key = secrets.token_urlsafe(32)
         register_key(key)
