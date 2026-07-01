@@ -35,7 +35,7 @@
         "https://x.com/*",
         "https://www.linkedin.com/*"
       ],
-      "js": ["content/content.js"],
+      "js": ["lib/dom-utils.js", "content/content.js"],
       "run_at": "document_idle"
     }
   ],
