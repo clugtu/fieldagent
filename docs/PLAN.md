@@ -2,22 +2,25 @@
 
 ## What It Is
 
-FieldAgent is a Chrome extension + AI microservice that automates the
-mechanical parts of posting content to social platforms. The user stays
-logged into their own accounts, navigates normally, and reviews before
-submitting — FieldAgent just fills in the fields.
+FieldAgent is a Chrome extension + AI microservice whose job is exactly
+what the name suggests: fill in web forms.
 
-It is designed to be published and used independently of Miniforge, but
-integrates naturally as a node in the Miniforge multi-agent architecture:
-Miniforge can enqueue tasks for FieldAgent to execute, and FieldAgent
-reports results back.
+Any app or script can hand FieldAgent a task — "fill a Facebook post
+with this caption" or "fill a job application with these details" — and
+FieldAgent's Inspector Agent figures out how to map that content onto
+whatever is currently on screen. The human user reviews the result and
+submits. FieldAgent never clicks Submit.
+
+It is platform-agnostic at the code level. The agent adapts to what it
+sees on screen rather than relying on hardcoded selectors, which means
+it degrades gracefully when a site redesigns its form layout.
 
 ---
 
-## The Two-Word Name
+## The Name
 
 - **Field agent** — an operative working out in the world, navigating
-  unfamiliar terrain, executing missions from HQ
+  unfamiliar terrain, executing a mission handed down from HQ
 - **Field agent** — an AI agent that works in form *fields* on web pages
 
 ---
@@ -26,86 +29,80 @@ reports results back.
 
 1. **The extension is an actuator, not a brain.** It extracts DOM state
    and applies instructions. All reasoning lives in the service.
-2. **The service hosts the actual agent.** An LLM-backed agent inspects
-   DOM snapshots, decides what to fill and how, handles unexpected states.
-3. **The user always commits.** FieldAgent pre-fills; the user reviews and
-   clicks Publish / Next / Submit. No autonomous posting.
-4. **Generic by design.** The service knows nothing about specific
-   platforms at the code level. The agent figures out what's on screen and
-   adapts. Brittle hardcoded selectors are the fallback, not the strategy.
-5. **Publishable standalone.** Anyone with an account on any platform and
-   an API key can use FieldAgent without Miniforge.
+2. **The service hosts the actual agent.** An LLM-backed Inspector Agent
+   receives DOM snapshots, decides what to fill and how, handles
+   unexpected page states, and knows when more steps are coming.
+3. **The user always submits.** FieldAgent pre-fills; the user reviews
+   and clicks Publish / Submit / Next. No autonomous form submission.
+4. **Generic by design.** The service has no hardcoded knowledge of
+   specific sites. The agent reads the page and figures it out.
+5. **Standalone and publishable.** No dependency on any particular app.
+   Any producer that can make an HTTP POST can use FieldAgent.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Miniforge (or any task producer)                                │
-│  POST /tasks  →  FieldAgent Service                              │
-└──────────────────────────┬───────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Any producer (app, script, CLI)                         │
+│  POST /tasks  →  FieldAgent Service                      │
+└──────────────────────────┬───────────────────────────────┘
                            │ enqueue task
                            ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  FieldAgent Service  (FastAPI + LangChain agent)                 │
-│                                                                  │
-│  • Task queue  (pending → active → complete)                     │
-│  • Inspector Agent  — receives DOM snapshots, returns fill       │
-│    instructions.  Multi-step aware: knows whether the current    │
-│    page is step N of M, and what to expect next.                 │
-│  • SSE / WebSocket channel  — pushes instructions to extension   │
-│    in real time without polling                                   │
-└──────────────────────────┬───────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  FieldAgent Service  (FastAPI + LangChain)               │
+│                                                          │
+│  • Task queue  (pending → active → complete)             │
+│  • Inspector Agent  — receives DOM snapshots, returns    │
+│    structured fill instructions. Multi-step aware.       │
+└──────────────────────────┬───────────────────────────────┘
                            │ instructions / status
                            ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  FieldAgent Chrome Extension  (MV3)                              │
-│                                                                  │
-│  service-worker.js  — auth, task polling, session management    │
-│  content.js         — DOM snapshot extraction, fill execution,  │
-│                        MutationObserver for multi-step detection │
-│  sidepanel/         — live task status UI, manual re-inspect     │
-└──────────────────────────┬───────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  FieldAgent Chrome Extension  (MV3)                      │
+│                                                          │
+│  service-worker.js  — auth, polling, session mgmt       │
+│  content.js         — DOM snapshot, fill execution,     │
+│                        MutationObserver for multi-step   │
+│  sidepanel/         — live task status, manual trigger   │
+└──────────────────────────┬───────────────────────────────┘
                            │ fills fields, user reviews & submits
                            ▼
-              facebook.com / instagram.com / pinterest.com
+                  Target web page (any site)
 ```
 
 ---
 
 ## Data Flow
 
-### Happy path (single-page form)
+### Single-page form (happy path)
 
-1. Miniforge user clicks "Post Manually" for a Meta post.
-2. Miniforge calls `POST /tasks` on FieldAgent Service with the task
-   payload (platform, caption, image URL, link, destination).
-3. Miniforge opens the social platform in a new tab (or user navigates
-   there).
-4. Extension content script fires on page load, sends a DOM snapshot to
-   the service via `POST /inspect`.
-5. Inspector Agent analyzes the snapshot against the pending task, returns
-   fill instructions: `[{selector_hint, value, action}, ...]`.
-6. Extension applies the instructions (types into inputs, selects options).
-7. User reviews, clicks Publish.
-8. Extension detects page change (success URL or "post live" indicator),
-   calls `POST /tasks/{id}/complete` with the result URL.
-9. Service notifies Miniforge (webhook or the next poll).
+1. Producer calls `POST /tasks` with task payload.
+2. User navigates to the target page in Chrome.
+3. Content script fires, sends a DOM snapshot to the service via
+   `POST /inspect`.
+4. Inspector Agent analyzes the snapshot against the task, returns fill
+   instructions: `[{selector_hint, fallback_hint, value, action}, ...]`
+5. Extension applies the instructions.
+6. User reviews, clicks Submit.
+7. Extension detects success (URL change or success indicator), calls
+   `POST /tasks/{id}/complete` with the result URL.
 
-### Multi-step flow
+### Multi-step form
 
-Steps 4–6 repeat on each new page. The Inspector Agent's response
-includes `step_complete: true/false` and `expect_next_page: true/false`
-so the extension knows to re-inspect after the user navigates forward
-rather than considering the task done.
+Steps 3–5 repeat on each page/step. The Inspector Agent's response
+includes `expect_next_page: true` when it detects a wizard flow, so the
+extension knows to re-inspect after the user navigates forward rather
+than treating the task as complete.
 
 ---
 
 ## Inspector Agent
 
-The agent is a LangChain ReAct agent backed by Claude. It receives:
+A LangChain ReAct agent backed by Claude. It receives:
 
+**Input:**
 ```json
 {
   "task": {
@@ -113,8 +110,7 @@ The agent is a LangChain ReAct agent backed by Claude. It receives:
     "destination": "facebook",
     "caption": "...",
     "image_url": "https://...",
-    "link": "https://...",
-    "step_hint": null
+    "link": "https://..."
   },
   "snapshot": {
     "url": "https://www.facebook.com/...",
@@ -130,118 +126,107 @@ The agent is a LangChain ReAct agent backed by Claude. It receives:
 }
 ```
 
-It returns:
-
+**Output:**
 ```json
 {
   "instructions": [
     {
-      "selector_hint": "textarea with label \"What's on your mind?\"",
-      "value": "The full caption text...",
+      "selector_hint": "textarea[aria-label='create a post']",
+      "fallback_hint": "main text composer textarea",
+      "value": "Caption text...",
       "action": "type"
     }
   ],
   "step_complete": false,
   "expect_next_page": false,
-  "notes": "Image must be attached manually — no programmatic attach available"
+  "notes": "Image must be attached manually — no programmatic attach path"
 }
 ```
 
-The agent uses tool calls to reason through ambiguous cases (multiple
-matching fields, unexpected page state, login wall detected, etc.) before
-committing to instructions.
+The agent uses tools to reason through ambiguous cases (multiple matching
+fields, unexpected page state, login wall, etc.) before committing to
+instructions.
 
 ---
 
-## Extension — DOM Snapshot Strategy
+## DOM Snapshot Strategy
 
-Rather than sending raw HTML (noisy, leaks content, huge), content.js
-extracts a semantic summary:
+The content script sends a *semantic* summary, not raw HTML:
 
-- All `<input>`, `<textarea>`, `<select>` elements with their:
-  - `type`, `name`, `id`, `placeholder`, `aria-label`, `aria-describedby`
-  - nearest visible `<label>` text
-  - current value (so the agent knows what's already filled)
-- Visible `<button>` and `<a role="button">` with their text
+- All `<input>`, `<textarea>`, `<select>` with:
+  - `type`, `name`, `id`, `placeholder`, `aria-label`, nearest label text
+  - current value (so the agent sees what's already filled)
+- Visible buttons with their text
 - `<h1>`–`<h3>` headings
 - Current URL and `<title>`
-- A `platform_hint` derived from `window.location.hostname`
+- `platform_hint` from `window.location.hostname`
 
-This keeps the payload small (<2KB typically), avoids sending private
-page content the agent doesn't need, and gives the agent everything
-necessary to identify fields semantically.
+Typical payload: under 2 KB. No private page content, no DOM noise.
 
 ---
 
 ## Authentication
 
-The extension has an Options page where the user enters:
-- **Service URL** — their FieldAgent service endpoint
-  (e.g. `https://fieldagent.example.com` or `http://localhost:8080`)
-- **API Key** — generated by the service on first connect
+The extension Options page takes:
+- **Service URL** — where the FieldAgent service is running
+- **API Key** — generated by the service on first start (printed to stdout)
 
-Stored in `chrome.storage.sync` so settings follow the user across
-devices. The service issues API keys via `POST /auth/keys` (protected by
-an initial setup token set in the service's environment).
-
-For Miniforge integration, Miniforge reads the service URL from its own
-config and uses a server-to-server API key (never exposed to the browser).
+Stored in `chrome.storage.sync`. The service validates `X-API-Key` on
+every request. Keys are seeded from `FIELDAGENT_API_KEYS` in `.env`.
 
 ---
 
-## Multi-Agent Integration with Miniforge
+## Fill Instruction Execution
 
-FieldAgent Service exposes an MCP-compatible tool surface so the
-Miniforge main agent can call it directly:
+The content script tries two resolution strategies per instruction:
 
-- `fieldagent_enqueue_task(platform, payload)` — submit a posting task
-- `fieldagent_get_task_status(task_id)` — poll result
-- `fieldagent_list_tasks(status?)` — see queue
+1. **Primary** — `selector_hint` as a CSS/attribute selector (e.g.
+   `textarea[aria-label="What's on your mind?"]`)
+2. **Fallback** — keyword matching against `fallback_hint` across visible
+   inputs' labels, placeholders, and ARIA attributes
 
-This means the Miniforge agent can say "post this caption to Facebook"
-as part of a longer chain (e.g. after publishing on Cults3D) without
-the user having to manually trigger the flow from the package panel.
+After resolving the element, it simulates native input events
+(`input`, `change`) so React/Vue/Angular state updates fire correctly.
 
 ---
 
-## Platforms
+## Supported Targets
 
-| Platform  | Web composer? | URL prefill? | Clipboard strategy | Notes |
-|-----------|--------------|-------------|-------------------|-------|
-| Pinterest | Yes          | Yes (full)  | Redundant safety net | Best case — image, title, description, link all via URL params |
-| Facebook  | Yes          | Partial     | Caption auto-copied | sharer.php opens page; extension fills text composer after page loads |
-| Instagram | No (mobile)  | No          | Caption auto-copied | Extension can't help much; opens phone deep link + copies caption |
-| X/Twitter | Yes          | Yes (text)  | Safety net | `twitter.com/intent/tweet` supports `text` param |
-| LinkedIn  | Yes          | No          | Caption auto-copied | Extension fills the composer after page load |
+| Site       | Composer? | URL prefill? | Clipboard assist? | Notes |
+|------------|-----------|-------------|------------------|-------|
+| Pinterest  | Yes       | Full        | Safety net        | Best case — image, title, description, link via URL params |
+| Facebook   | Yes       | Partial     | Caption           | sharer.php opens page; extension fills composer after load |
+| Instagram  | No (mobile)| No         | Caption           | Deep link to app + auto-copy caption |
+| X/Twitter  | Yes       | Text only   | Safety net        | `intent/tweet?text=` |
+| LinkedIn   | Yes       | No          | Caption           | Extension fills composer after navigation |
 
-Pinterest and X are the highest-fidelity targets. Facebook and LinkedIn
-are valuable but require the extension to fill after navigation. Instagram
-is the most limited.
+FieldAgent works on any site with an HTML form — social platforms are
+just the first-class targets because they have the highest manual burden.
 
 ---
 
 ## Phased Rollout
 
-### Phase 1 — Pinterest (prove the loop)
+### Phase 1 — Core loop (Pinterest)
 - Service with Inspector Agent
-- Extension content script on pinterest.com
+- Extension content script and side panel
 - Single-step form fill
 - Manual `POST /tasks` to trigger
 
-### Phase 2 — Facebook + LinkedIn
-- Multi-step support (MutationObserver + re-inspect loop)
-- Side panel UI for live status
-- Miniforge integration (write task from package panel)
+### Phase 2 — Multi-step + more platforms
+- MutationObserver re-inspect loop
+- Facebook and LinkedIn support
+- Side panel live status during multi-step flows
 
-### Phase 3 — Auth + Publishing
+### Phase 3 — Auth + publishing
 - API key management UI in extension Options
-- Service deployment (Docker + environment config)
+- Docker packaging for the service
 - Chrome Web Store listing
 
-### Phase 4 — Full multi-agent integration
-- MCP tool surface on the service
-- Miniforge agent can call FieldAgent as part of chains
-- Task history + audit log
+### Phase 4 — Extensibility
+- Webhook / SSE callback so producers get notified when a task completes
+- Task history and audit log
+- Support for file upload fields (media attachment)
 
 ---
 
@@ -249,12 +234,12 @@ is the most limited.
 
 | Layer | Choice | Reason |
 |---|---|---|
-| Extension | Chrome MV3 | Required for Chrome Web Store; Side Panel API (Chrome 116+) |
-| Extension UI | Vanilla JS + CSS | No build step needed for MVP; swap to React/Vite later |
-| Service | FastAPI (Python) | Consistent with Miniforge; async-native; easy LangChain integration |
-| Agent | LangChain + Claude | Consistent with Miniforge agent architecture |
-| Task storage | In-memory + SQLite | Simple for MVP; swap to Redis/Postgres for production |
-| Auth | API keys (HMAC-signed) | Simple, publishable, no OAuth dependency |
+| Extension | Chrome MV3 | Required for Chrome Web Store; Side Panel API available since Chrome 116 |
+| Extension UI | Vanilla JS | No build step for MVP; swap to React/Vite if needed |
+| Service | FastAPI (Python) | Async-native, easy LangChain integration, clean OpenAPI docs |
+| Agent | LangChain + Claude | Structured output, tool use, reliable JSON extraction |
+| Task storage | In-memory → SQLite | Simple for MVP; production swap is one file |
+| Auth | API keys | Simple, no OAuth dependency, usable from any HTTP client |
 
 ---
 
@@ -268,23 +253,28 @@ fieldagent/
 │   ├── manifest.json
 │   ├── icons/
 │   ├── background/
-│   │   └── service-worker.js  ← auth, polling, session
+│   │   └── service-worker.js  ← auth, polling, session management
 │   ├── content/
 │   │   └── content.js         ← DOM snapshot, fill execution
-│   └── sidepanel/
-│       ├── index.html
-│       └── panel.js           ← live task status UI
+│   ├── sidepanel/
+│   │   ├── index.html
+│   │   └── panel.js           ← live task status UI
+│   └── options/
+│       └── index.html         ← service URL + API key settings
 ├── service/
 │   ├── main.py                ← FastAPI app
+│   ├── config.py
+│   ├── auth.py
+│   ├── store.py               ← task store (in-memory, swap for prod)
 │   ├── requirements.txt
 │   ├── .env.example
 │   ├── agents/
 │   │   └── inspector.py       ← LangChain Inspector Agent
 │   ├── api/
-│   │   ├── tasks.py           ← task CRUD + status
+│   │   ├── tasks.py           ← task CRUD
 │   │   └── inspect.py         ← DOM snapshot → instructions
 │   └── models/
 │       └── schemas.py         ← Pydantic models
 └── shared/
-    └── protocol.md            ← extension↔service message format
+    └── protocol.md            ← extension ↔ service message format
 ```

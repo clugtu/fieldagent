@@ -21,7 +21,7 @@ async def create_task(
     body: CreateTaskRequest,
     _key: str = Depends(require_api_key),
 ) -> Task:
-    """Enqueue a posting task. Called by Miniforge or any other producer."""
+    """Enqueue a form-filling task. Called by any connected producer."""
     task = Task(payload=body.payload, source=body.source)
     task_store.put(task)
     return task

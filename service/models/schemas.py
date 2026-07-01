@@ -42,7 +42,7 @@ class Task(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    source: str = "unknown"  # e.g. "miniforge", "api", "extension"
+    source: str = "unknown"  # e.g. "api", "extension", "cli"
 
 
 class InputElement(BaseModel):
