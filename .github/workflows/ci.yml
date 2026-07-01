@@ -30,9 +30,7 @@ jobs:
         run: ruff format --check service/
 
       - name: Import check
-        run: |
-          cd service
-          python -c "from main import app; print('Service imports OK')"
+        run: PYTHONPATH=. python -c "from service.main import app; print('Service imports OK')"
         env:
           ANTHROPIC_API_KEY: placeholder
           FIELDAGENT_API_KEYS: placeholder
@@ -45,12 +43,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate manifest
-        run: python -c "
-import json, sys
-with open('extension/manifest.json') as f:
-    m = json.load(f)
-assert m['manifest_version'] == 3, 'must be MV3'
-assert 'background' in m
-assert 'content_scripts' in m
-print('manifest.json OK')
-"
+        run: |
+          python - <<'EOF'
+          import json
+          with open('extension/manifest.json') as f:
+              m = json.load(f)
+          assert m['manifest_version'] == 3, 'must be MV3'
+          assert 'background' in m
+          assert 'content_scripts' in m
+          print('manifest.json OK')
+          EOF
