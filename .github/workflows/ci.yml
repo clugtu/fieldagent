@@ -39,7 +39,7 @@ jobs:
         run: PYTHONPATH=. pytest service/tests/
         env:
           ANTHROPIC_API_KEY: placeholder
-          FIELDAGENT_API_KEYS: placeholder
+          FIELDAGENT_API_KEYS: test-key
 
   extension:
     name: Extension
