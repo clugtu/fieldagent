@@ -1,4 +1,5 @@
 const statusBadge = document.getElementById('status-badge')
+const notConfigured = document.getElementById('not-configured')
 const noTask = document.getElementById('no-task')
 const taskSection = document.getElementById('task-section')
 const taskPlatform = document.getElementById('task-platform')
@@ -9,6 +10,32 @@ const instructionsList = document.getElementById('instructions-list')
 const agentNotes = document.getElementById('agent-notes')
 const btnReinspect = document.getElementById('btn-reinspect')
 const btnClear = document.getElementById('btn-clear')
+
+function openSettings() {
+  chrome.runtime.openOptionsPage()
+}
+
+document.getElementById('btn-open-settings').addEventListener('click', openSettings)
+document.getElementById('btn-settings').addEventListener('click', openSettings)
+
+// ─── Config check ─────────────────────────────────────────────────────────────
+
+async function checkConfig() {
+  const { serviceUrl, apiKey } = await chrome.storage.sync.get(['serviceUrl', 'apiKey'])
+  if (!serviceUrl || !apiKey) {
+    notConfigured.style.display = ''
+    noTask.style.display = 'none'
+    statusBadge.textContent = 'Not configured'
+    statusBadge.className = 'badge none'
+    btnReinspect.disabled = true
+    btnClear.disabled = true
+    return false
+  }
+  notConfigured.style.display = 'none'
+  return true
+}
+
+// ─── Task rendering ───────────────────────────────────────────────────────────
 
 function renderTask(task) {
   if (!task) {
@@ -53,12 +80,28 @@ function renderInstructions(payload) {
   }
 }
 
-// Load current state on open
-chrome.runtime.sendMessage({ type: 'GET_ACTIVE_TASK' }, (response) => {
-  renderTask(response?.task || null)
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+checkConfig().then((configured) => {
+  if (!configured) return
+  chrome.runtime.sendMessage({ type: 'GET_ACTIVE_TASK' }, (response) => {
+    renderTask(response?.task || null)
+  })
 })
 
-// Listen for live updates from the service worker
+// Re-check config whenever storage changes (e.g. user just saved Settings)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && (changes.serviceUrl || changes.apiKey)) {
+    checkConfig().then((configured) => {
+      if (configured) {
+        chrome.runtime.sendMessage({ type: 'GET_ACTIVE_TASK' }, (response) => {
+          renderTask(response?.task || null)
+        })
+      }
+    })
+  }
+})
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'TASK_ACQUIRED') renderTask(message.task)
   if (message.type === 'INSTRUCTIONS_UPDATE') renderInstructions(message.payload)
