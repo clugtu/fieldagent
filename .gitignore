@@ -7,4 +7,6 @@ service/**/__pycache__/
 node_modules/
 extension/icons/*.png
 service/logs/
+logs/
 service/*.db
+*.db
