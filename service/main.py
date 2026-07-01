@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from service.api import assets as assets_router
 from service.api import inspect as inspect_router
 from service.api import tasks as tasks_router
 from service.auth import register_key
@@ -48,6 +49,7 @@ app.add_middleware(
 
 app.include_router(tasks_router.router)
 app.include_router(inspect_router.router)
+app.include_router(assets_router.router)
 
 
 @app.get("/health")

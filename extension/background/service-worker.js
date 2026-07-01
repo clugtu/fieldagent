@@ -71,6 +71,24 @@ async function completeTask(taskId, resultUrl) {
   })
 }
 
+async function fetchAssetAsBase64(taskId, assetId) {
+  const { serviceUrl, apiKey } = await getConfig()
+  const res = await fetch(`${serviceUrl}/assets/${taskId}/${assetId}`, {
+    headers: { 'X-API-Key': apiKey },
+  })
+  if (!res.ok) throw new Error(`Asset fetch failed: ${res.status}`)
+  const mimeType = res.headers.get('content-type') || 'application/octet-stream'
+  const disposition = res.headers.get('content-disposition') || ''
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/)
+  const filename = filenameMatch ? filenameMatch[1] : assetId
+  const buffer = await res.arrayBuffer()
+  // Convert to base64 for transfer to content script
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return { base64: btoa(binary), mimeType, filename }
+}
+
 // ─── Polling ──────────────────────────────────────────────────────────────────
 
 async function pollForTask() {
@@ -132,6 +150,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       case 'GET_ACTIVE_TASK': {
         sendResponse({ type: 'ACTIVE_TASK', task })
+        break
+      }
+
+      case 'FETCH_ASSET': {
+        try {
+          const asset = await fetchAssetAsBase64(message.taskId, message.assetId)
+          sendResponse(asset)
+        } catch (err) {
+          sendResponse({ error: err.message })
+        }
         break
       }
 
