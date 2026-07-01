@@ -113,10 +113,20 @@ async function pollForTask() {
 }
 
 // ─── Alarm setup ──────────────────────────────────────────────────────────────
+// Ensure the alarm exists on install AND on every service worker startup —
+// MV3 service workers are terminated when idle and restarted on demand, so
+// onInstalled alone (which fires only once) isn't enough.
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(POLL_ALARM, { periodInMinutes: POLL_INTERVAL_MINUTES })
-})
+async function ensureAlarm() {
+  const existing = await chrome.alarms.get(POLL_ALARM)
+  if (!existing) {
+    chrome.alarms.create(POLL_ALARM, { periodInMinutes: POLL_INTERVAL_MINUTES })
+  }
+}
+
+chrome.runtime.onInstalled.addListener(ensureAlarm)
+chrome.runtime.onStartup.addListener(ensureAlarm)
+ensureAlarm() // also runs when the service worker restarts mid-session
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === POLL_ALARM) pollForTask()

@@ -70,7 +70,14 @@
     <span class="badge none" id="status-badge">No task</span>
   </div>
 
-  <div id="no-task" class="empty">
+  <div id="not-configured" class="empty" style="display:none">
+    <div style="font-size:24px;margin-bottom:8px">⚠️</div>
+    <div style="font-weight:600;color:#374151;margin-bottom:6px">Not configured</div>
+    <div style="margin-bottom:12px">Enter your service URL and API key to get started.</div>
+    <button id="btn-open-settings" class="btn btn-primary" style="margin:0 auto">Open Settings</button>
+  </div>
+
+  <div id="no-task" class="empty" style="display:none">
     No active task. Navigate to a form and trigger a task from your app to begin.
   </div>
 
@@ -94,7 +101,7 @@
     <button class="btn btn-ghost"   id="btn-clear"     disabled>Clear task</button>
   </div>
 
-  <a href="../options/index.html" class="settings-link" target="_blank">⚙ Settings</a>
+  <button id="btn-settings" class="settings-link" style="background:none;border:none;cursor:pointer;width:100%">⚙ Settings</button>
 
   <script src="panel.js"></script>
 </body>
