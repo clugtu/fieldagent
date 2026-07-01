@@ -1,7 +1,7 @@
 fastapi>=0.138.2
 uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
-pydantic-settings>=2.6.0
+pydantic-settings>=2.14.2
 langchain>=0.3.30
 langchain-anthropic>=0.3.22
 langchain-core>=0.3.86
