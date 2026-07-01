@@ -16,7 +16,6 @@ continues from the ask node with the answer injected into state.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -25,6 +24,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from service.logging_config import get_logger
 from service.models.schemas import (
     DomSnapshot,
     FillInstruction,
@@ -34,7 +34,7 @@ from service.models.schemas import (
 )
 from typing_extensions import TypedDict
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ─── Graph state ─────────────────────────────────────────────────────────────
 
@@ -132,11 +132,10 @@ def analyze(state: InspectorState) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning(
-            "[GRAPH] analyze: could not parse LLM response, defaulting to fill"
-        )
+        logger.warning("analyze: could not parse LLM response, defaulting to fill")
         parsed = {"decision": "fill"}
 
+    logger.info("analyze decision: %s task=%s", parsed.get("decision"), state["task_id"])
     return {
         "messages": msgs + [response],
         "_analyze_result": parsed,
@@ -187,7 +186,7 @@ def fill(state: InspectorState) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("[GRAPH] fill: could not parse LLM response")
+        logger.warning("fill: could not parse LLM response for task=%s", state["task_id"])
         parsed = {"instructions": [], "notes": "Parse error in fill node"}
 
     return {
