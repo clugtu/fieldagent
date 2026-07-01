@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source .venv/bin/activate
-PYTHONPATH=.. uvicorn main:app --port "${PORT:-8080}" --reload
+PYTHONPATH=.. uvicorn main:app --port "${PORT:-8080}"

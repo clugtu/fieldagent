@@ -28,7 +28,11 @@ async def inspect(
     task = task_store.get(body.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    if task.status not in (TaskStatus.pending, TaskStatus.active):
+    if task.status not in (
+        TaskStatus.pending,
+        TaskStatus.active,
+        TaskStatus.awaiting_input,
+    ):
         raise HTTPException(
             status_code=409,
             detail=f"Task {body.task_id} is {task.status} — cannot inspect",

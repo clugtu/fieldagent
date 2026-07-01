@@ -102,6 +102,15 @@ function resolveElement(instruction) {
 function applyTextFill(el, value) {
   el.focus()
   // Use the native setter so React / Vue synthetic events fire correctly.
+  // contenteditable divs (common in React rich-text editors like Pinterest's)
+  // don't have a .value property — set textContent instead.
+  if (el.isContentEditable) {
+    el.textContent = value
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return
+  }
+
   // Pick the setter from the element's own prototype — calling the
   // HTMLInputElement setter on a textarea (or vice versa) throws in jsdom.
   const proto = el instanceof HTMLTextAreaElement

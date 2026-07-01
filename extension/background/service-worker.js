@@ -38,30 +38,30 @@ async function apiFetch(path, options = {}) {
   const { serviceUrl, apiKey } = await getConfig()
   if (!serviceUrl || !apiKey) return null
 
-  const res = await fetch(`${serviceUrl}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': apiKey,
-      ...(options.headers || {}),
-    },
-  })
+  let res
+  try {
+    res = await fetch(`${serviceUrl}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        ...(options.headers || {}),
+      },
+    })
+  } catch (err) {
+    console.warn('[FieldAgent] Fetch failed for', path, '—', err.message, '(serviceUrl:', serviceUrl + ')')
+    return null
+  }
   if (!res.ok) {
     console.warn('[FieldAgent] API error', res.status, path)
-    return null
+    return { _error: true, status: res.status }
   }
   return res.json()
 }
 
 async function fetchPendingTask() {
-  return apiFetch('/tasks/pending')
-}
-
-async function postSnapshot(taskId, snapshot) {
-  return apiFetch('/inspect', {
-    method: 'POST',
-    body: JSON.stringify({ task_id: taskId, snapshot }),
-  })
+  const r = await apiFetch('/tasks/pending')
+  return r?._error ? null : r
 }
 
 async function completeTask(taskId, resultUrl) {
@@ -101,10 +101,8 @@ async function pollForTask() {
   await setActiveTask(task)
   console.log('[FieldAgent] Task acquired:', task.task_id, task.payload.platform)
 
-  // Notify the side panel and any open content scripts
   chrome.runtime.sendMessage({ type: 'TASK_ACQUIRED', task }).catch(() => {})
 
-  // Find the active tab — if it's on the right platform, trigger an inspect
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
   const tab = tabs[0]
   if (tab) {
@@ -136,52 +134,96 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   ;(async () => {
-    const task = await getActiveTask()
+    try {
+      const task = await getActiveTask()
 
-    switch (message.type) {
-      case 'SNAPSHOT_READY': {
-        if (!task) { sendResponse({ type: 'NO_TASK' }); return }
-        const instructions = await postSnapshot(task.task_id, message.snapshot)
-        if (!instructions) { sendResponse({ type: 'NO_INSTRUCTIONS' }); return }
-        sendResponse({ type: 'INSTRUCTIONS', payload: instructions })
-        // Also push to side panel
-        chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: instructions }).catch(() => {})
-        break
-      }
+      switch (message.type) {
+        case 'TASK_COMPLETE': {
+          if (!task) { sendResponse({ type: 'OK' }); return }
+          await completeTask(task.task_id, message.resultUrl)
+          await clearActiveTask()
+          chrome.runtime.sendMessage({ type: 'TASK_DONE', taskId: task.task_id }).catch(() => {})
+          sendResponse({ type: 'OK' })
+          break
+        }
 
-      case 'TASK_COMPLETE': {
-        if (!task) { sendResponse({ type: 'OK' }); return }
-        await completeTask(task.task_id, message.resultUrl)
-        await clearActiveTask()
-        chrome.runtime.sendMessage({ type: 'TASK_DONE', taskId: task.task_id }).catch(() => {})
-        sendResponse({ type: 'OK' })
-        break
-      }
+        case 'GET_ACTIVE_TASK': {
+          sendResponse({ type: 'ACTIVE_TASK', task })
+          break
+        }
 
-      case 'GET_ACTIVE_TASK': {
-        sendResponse({ type: 'ACTIVE_TASK', task })
-        break
-      }
-
-      case 'FETCH_ASSET': {
-        try {
+        case 'FETCH_ASSET': {
           const asset = await fetchAssetAsBase64(message.taskId, message.assetId)
           sendResponse(asset)
-        } catch (err) {
-          sendResponse({ error: err.message })
+          break
         }
-        break
-      }
 
-      case 'CLEAR_TASK': {
-        await clearActiveTask()
-        sendResponse({ type: 'OK' })
-        break
+        case 'ANSWER_QUESTION': {
+          if (!task) { sendResponse({ error: 'No active task' }); return }
+          const result = await apiFetch(`/inspect/respond/${task.task_id}`, {
+            method: 'POST',
+            body: JSON.stringify({ answer: message.answer }),
+          })
+          if (!result || result._error) {
+            sendResponse({ error: 'Failed to submit answer' })
+          } else {
+            chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+            if (tabs[0] && result.instructions?.length) {
+              chrome.tabs.sendMessage(tabs[0].id, { type: 'APPLY_INSTRUCTIONS', payload: result }).catch(() => {})
+            }
+            sendResponse({ payload: result })
+          }
+          break
+        }
+
+        case 'CLEAR_TASK': {
+          await clearActiveTask()
+          sendResponse({ type: 'OK' })
+          pollForTask() // pick up a pending task immediately instead of waiting for the alarm
+          break
+        }
       }
+    } catch (err) {
+      console.error('[FieldAgent] Message handler error:', err)
+      sendResponse({ error: err.message })
     }
   })()
 
   return true // keep message channel open for async response
+})
+
+// ─── Inspect port ─────────────────────────────────────────────────────────────
+// Content scripts on HTTPS pages can't fetch HTTP (mixed content). They open a
+// port named "inspect" instead; the open port keeps this service worker alive
+// for the duration of the Claude inference call (~5-10s).
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'inspect') return
+
+  port.onMessage.addListener(async (msg) => {
+    if (msg.type !== 'INSPECT') return
+    try {
+      const result = await apiFetch('/inspect', {
+        method: 'POST',
+        body: JSON.stringify({ task_id: msg.taskId, snapshot: msg.snapshot }),
+      })
+      if (!result || result._error) {
+        if (result?.status === 404 || result?.status === 409) {
+          console.warn('[FieldAgent] Task rejected by service (status', result?.status, ') — clearing local task')
+          await clearActiveTask()
+          chrome.runtime.sendMessage({ type: 'TASK_DONE' }).catch(() => {})
+          pollForTask()
+        }
+        port.postMessage({ error: `Service returned ${result?.status ?? 'no response'}` })
+        return
+      }
+      chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
+      port.postMessage(result)
+    } catch (err) {
+      port.postMessage({ error: err.message })
+    }
+  })
 })
 
 // ─── Side panel ───────────────────────────────────────────────────────────────
