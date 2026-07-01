@@ -6,3 +6,5 @@ service/**/__pycache__/
 .DS_Store
 node_modules/
 extension/icons/*.png
+service/logs/
+service/*.db

@@ -12,21 +12,23 @@ from service.api import inspect as inspect_router
 from service.api import tasks as tasks_router
 from service.auth import register_key
 from service.config import settings
+from service.logging_config import get_logger, setup_logging
+
+setup_logging(log_dir=settings.logs_dir, level=settings.log_level)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure at least one API key exists on startup so the service is
-    # immediately usable. Printed to stdout for initial setup.
     if not settings.api_keys:
         key = secrets.token_urlsafe(32)
         register_key(key)
-        print("\n[FieldAgent] No API keys configured. Generated a bootstrap key:")
-        print(f"  {key}")
-        print("  Set FIELDAGENT_API_KEYS=<key> in .env to make it persistent.\n")
+        logger.warning("No API keys configured. Generated a bootstrap key: %s", key)
+        logger.warning("Set FIELDAGENT_API_KEYS=<key> in .env to make it persistent.")
     else:
         for key in settings.api_keys:
             register_key(key)
+        logger.info("Registered %d API key(s)", len(settings.api_keys))
 
     yield
 

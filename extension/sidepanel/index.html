@@ -90,6 +90,14 @@
     </div>
   </div>
 
+  <div id="question-section" class="section" style="display:none">
+    <div class="section-label">Agent needs info</div>
+    <div id="question-text" style="font-size:12px;color:#374151;margin-bottom:8px;line-height:1.4"></div>
+    <textarea id="question-answer" rows="2" placeholder="Your answer…"
+      style="width:100%;font-size:12px;padding:6px 8px;border:1px solid #d1d5db;border-radius:5px;resize:vertical"></textarea>
+    <button id="btn-answer" class="btn btn-primary" style="margin-top:6px;width:100%">Send answer</button>
+  </div>
+
   <div id="instructions-section" class="section" style="display:none">
     <div class="section-label">Last Fill Instructions</div>
     <div id="instructions-list"></div>
@@ -97,8 +105,11 @@
   </div>
 
   <div class="actions">
-    <button class="btn btn-primary" id="btn-reinspect" disabled>Re-inspect page</button>
-    <button class="btn btn-ghost"   id="btn-clear"     disabled>Clear task</button>
+    <button class="btn btn-primary" id="btn-reinspect"  disabled>Re-inspect page</button>
+    <button class="btn btn-ghost"   id="btn-clear"      disabled>Clear task</button>
+  </div>
+  <div class="actions" style="padding-top:0">
+    <button class="btn btn-ghost"   id="btn-complete"   disabled style="width:100%;color:#059669;border:1px solid #059669">✓ Mark complete</button>
   </div>
 
   <button id="btn-settings" class="settings-link" style="background:none;border:none;cursor:pointer;width:100%">⚙ Settings</button>

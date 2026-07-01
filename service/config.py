@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     fieldagent_api_keys: str = ""  # comma-separated
     cors_origins: list[str] = ["*"]
     port: int = 8080
+    log_level: str = "INFO"
+    logs_dir: str = "./logs"
 
     @property
     def api_keys(self) -> list[str]:

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from service.agents.inspector import resume_with_answer, run_inspector
 from service.auth import require_api_key
+from service.logging_config import get_logger
 from service.models.schemas import (
     InspectRequest,
     InspectResponse,
@@ -14,6 +15,7 @@ from service.models.schemas import (
 from service.store import task_store
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
+logger = get_logger(__name__)
 
 
 @router.post("", response_model=InspectResponse)
@@ -26,13 +28,29 @@ async def inspect(
     task = task_store.get(body.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    if task.status not in (TaskStatus.pending, TaskStatus.active):
+    if task.status not in (
+        TaskStatus.pending,
+        TaskStatus.active,
+        TaskStatus.awaiting_input,
+    ):
         raise HTTPException(
             status_code=409,
             detail=f"Task {body.task_id} is {task.status} — cannot inspect",
         )
 
+    logger.info(
+        "Inspect request: task_id=%s url=%s inputs=%d",
+        body.task_id,
+        body.snapshot.url,
+        len(body.snapshot.inputs),
+    )
     response, thread_id = await run_inspector(task, body.snapshot)
+    logger.info(
+        "Inspect result: task_id=%s status=%s instructions=%d",
+        body.task_id,
+        response.status,
+        len(response.instructions),
+    )
 
     # Persist graph thread ID and status update
     task.graph_thread_id = thread_id

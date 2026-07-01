@@ -8,8 +8,13 @@ chrome.storage.sync.get(['serviceUrl', 'apiKey'], ({ serviceUrl, apiKey }) => {
 })
 
 document.getElementById('save').addEventListener('click', () => {
+  let url = urlInput.value.trim().replace(/\/$/, '')
+  if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'http://' + url
+    urlInput.value = url
+  }
   chrome.storage.sync.set(
-    { serviceUrl: urlInput.value.trim().replace(/\/$/, ''), apiKey: keyInput.value.trim() },
+    { serviceUrl: url, apiKey: keyInput.value.trim() },
     () => {
       savedMsg.style.display = 'block'
       setTimeout(() => { savedMsg.style.display = 'none' }, 2000)

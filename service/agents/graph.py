@@ -16,7 +16,6 @@ continues from the ask node with the answer injected into state.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -25,6 +24,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from service.config import settings
+from service.logging_config import get_logger
 from service.models.schemas import (
     DomSnapshot,
     FillInstruction,
@@ -34,7 +35,7 @@ from service.models.schemas import (
 )
 from typing_extensions import TypedDict
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ─── Graph state ─────────────────────────────────────────────────────────────
 
@@ -58,28 +59,25 @@ class InspectorState(TypedDict):
 
 
 def _llm() -> ChatAnthropic:
-    return ChatAnthropic(model="claude-sonnet-4-6", temperature=0)
+    return ChatAnthropic(
+        model="claude-sonnet-4-6", temperature=0, api_key=settings.anthropic_api_key
+    )
 
 
 # ─── Nodes ───────────────────────────────────────────────────────────────────
 
-_ANALYZE_PROMPT = """You are the FieldAgent Inspector. You receive a web form
-snapshot and a task describing content to fill into it. Your job is to decide
-one of three things:
+_ANALYZE_PROMPT = """You are the FieldAgent Inspector. You receive a web form snapshot and a task describing content to fill into it. Decide one of three things:
 
 1. FILL — you have enough information to produce fill instructions.
-2. ASK  — you cannot proceed without a specific piece of information from
-           the caller (e.g. which board to select, a missing field value).
+2. ASK  — you cannot proceed without a specific piece of information from the caller.
 3. DONE — the page looks like a success/confirmation state; the task is complete.
 
-Respond ONLY with valid JSON matching one of:
+Output ONLY raw JSON — no markdown, no explanation, no code fences. One of:
+{"decision":"fill"}
+{"decision":"ask","question":"<concise question>","options":["opt1","opt2"],"context":"<why>"}
+{"decision":"done","notes":"<what you saw>"}
 
-{ "decision": "fill" }
-{ "decision": "ask",  "question": "<concise question>", "options": ["opt1", "opt2"], "context": "<why>" }
-{ "decision": "done", "notes": "<what you saw>" }
-
-Be concise. Only ask if you genuinely cannot fill without the answer.
-"""
+Only ask if you genuinely cannot fill without the answer."""
 
 _FILL_PROMPT = """You are the FieldAgent Inspector. Produce fill instructions
 for the form described in the snapshot, using the task payload and (if present)
@@ -132,11 +130,12 @@ def analyze(state: InspectorState) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning(
-            "[GRAPH] analyze: could not parse LLM response, defaulting to fill"
-        )
+        logger.warning("analyze: could not parse LLM response, defaulting to fill")
         parsed = {"decision": "fill"}
 
+    logger.info(
+        "analyze decision: %s task=%s", parsed.get("decision"), state["task_id"]
+    )
     return {
         "messages": msgs + [response],
         "_analyze_result": parsed,
@@ -187,7 +186,9 @@ def fill(state: InspectorState) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("[GRAPH] fill: could not parse LLM response")
+        logger.warning(
+            "fill: could not parse LLM response for task=%s", state["task_id"]
+        )
         parsed = {"instructions": [], "notes": "Parse error in fill node"}
 
     return {

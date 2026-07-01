@@ -21,6 +21,10 @@ def client():
 @pytest.fixture(autouse=True)
 def clear_store():
     """Reset the task store between tests."""
-    task_store._tasks.clear()
+    with task_store._lock, task_store._connect() as conn:
+        conn.execute("DELETE FROM tasks")
+        conn.commit()
     yield
-    task_store._tasks.clear()
+    with task_store._lock, task_store._connect() as conn:
+        conn.execute("DELETE FROM tasks")
+        conn.commit()

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from service.auth import require_api_key
+from service.logging_config import get_logger
 from service.models.schemas import (
     CompleteTaskRequest,
     CreateTaskRequest,
@@ -11,6 +12,8 @@ from service.models.schemas import (
     TaskStatus,
 )
 from service.store import task_store
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -23,6 +26,12 @@ async def create_task(
     """Enqueue a form-filling task. Called by any connected producer."""
     task = Task(payload=body.payload, source=body.source)
     task_store.put(task)
+    logger.info(
+        "Task created: id=%s platform=%s source=%s",
+        task.task_id,
+        task.payload.platform.value,
+        task.source,
+    )
     return task
 
 
@@ -37,6 +46,11 @@ async def get_pending_task(
     task.status = TaskStatus.active
     task.updated_at = datetime.now(timezone.utc)
     task_store.put(task)
+    logger.info(
+        "Task claimed by extension: id=%s platform=%s",
+        task.task_id,
+        task.payload.platform.value,
+    )
     return task
 
 
