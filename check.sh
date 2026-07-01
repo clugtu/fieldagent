@@ -29,14 +29,14 @@ run "ruff lint"           ruff check service/
 run "ruff format"         ruff format --check service/
 run "import check"        env PYTHONPATH=. ANTHROPIC_API_KEY=placeholder FIELDAGENT_API_KEYS=placeholder \
                             python -c "from service.main import app; print('OK')"
-run "pytest (17 tests)"   env PYTHONPATH=. FIELDAGENT_API_KEYS=test-key \
+run "pytest"              env PYTHONPATH=. FIELDAGENT_API_KEYS=test-key \
                             pytest service/tests/ -q
 
 echo
 echo "── Extension ─────────────────────────────────────────"
 cd "$ROOT/extension"
 
-run "jest (19 tests)"     npm test --silent
+run "jest"     npm test --silent
 run "manifest valid"      python3 - <<'EOF'
 import json
 with open('manifest.json') as f:
