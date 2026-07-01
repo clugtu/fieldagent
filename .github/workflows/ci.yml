@@ -45,12 +45,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate manifest
-        run: python -c "
-import json, sys
-with open('extension/manifest.json') as f:
-    m = json.load(f)
-assert m['manifest_version'] == 3, 'must be MV3'
-assert 'background' in m
-assert 'content_scripts' in m
-print('manifest.json OK')
-"
+        run: |
+          python - <<'EOF'
+          import json
+          with open('extension/manifest.json') as f:
+              m = json.load(f)
+          assert m['manifest_version'] == 3, 'must be MV3'
+          assert 'background' in m
+          assert 'content_scripts' in m
+          print('manifest.json OK')
+          EOF
