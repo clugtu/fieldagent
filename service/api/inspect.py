@@ -34,9 +34,19 @@ async def inspect(
             detail=f"Task {body.task_id} is {task.status} — cannot inspect",
         )
 
-    logger.info("Inspect request: task_id=%s url=%s inputs=%d", body.task_id, body.snapshot.url, len(body.snapshot.inputs))
+    logger.info(
+        "Inspect request: task_id=%s url=%s inputs=%d",
+        body.task_id,
+        body.snapshot.url,
+        len(body.snapshot.inputs),
+    )
     response, thread_id = await run_inspector(task, body.snapshot)
-    logger.info("Inspect result: task_id=%s status=%s instructions=%d", body.task_id, response.status, len(response.instructions))
+    logger.info(
+        "Inspect result: task_id=%s status=%s instructions=%d",
+        body.task_id,
+        response.status,
+        len(response.instructions),
+    )
 
     # Persist graph thread ID and status update
     task.graph_thread_id = thread_id

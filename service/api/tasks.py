@@ -26,7 +26,12 @@ async def create_task(
     """Enqueue a form-filling task. Called by any connected producer."""
     task = Task(payload=body.payload, source=body.source)
     task_store.put(task)
-    logger.info("Task created: id=%s platform=%s source=%s", task.task_id, task.payload.platform.value, task.source)
+    logger.info(
+        "Task created: id=%s platform=%s source=%s",
+        task.task_id,
+        task.payload.platform.value,
+        task.source,
+    )
     return task
 
 
@@ -41,7 +46,11 @@ async def get_pending_task(
     task.status = TaskStatus.active
     task.updated_at = datetime.now(timezone.utc)
     task_store.put(task)
-    logger.info("Task claimed by extension: id=%s platform=%s", task.task_id, task.payload.platform.value)
+    logger.info(
+        "Task claimed by extension: id=%s platform=%s",
+        task.task_id,
+        task.payload.platform.value,
+    )
     return task
 
 
