@@ -146,10 +146,30 @@ function applyInstruction(instruction) {
   return true
 }
 
+/**
+ * Inject a file into an <input type="file"> via DataTransfer.
+ * Called by content.js after the SW returns the base64-encoded asset.
+ * Extracted here so it can be unit-tested without the async chrome message.
+ *
+ * @param {HTMLInputElement} el
+ * @param {{ base64: string, mimeType: string, filename: string }} fileData
+ */
+function injectFile(el, { base64, mimeType, filename }) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  const blob = new Blob([bytes], { type: mimeType })
+  const file = new File([blob], filename, { type: mimeType })
+  const dt = new DataTransfer()
+  dt.items.add(file)
+  el.files = dt.files
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 if (typeof module !== 'undefined') {
   // CommonJS — used by Jest tests
-  module.exports = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction }
+  module.exports = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction, injectFile }
 } else {
   // Browser content script — expose for content.js
-  window.FieldAgentUtils = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction }
+  window.FieldAgentUtils = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction, injectFile }
 }

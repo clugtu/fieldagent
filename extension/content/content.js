@@ -40,15 +40,7 @@
             return
           }
           try {
-            const binary = atob(response.base64)
-            const bytes = new Uint8Array(binary.length)
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-            const blob = new Blob([bytes], { type: response.mimeType })
-            const file = new File([blob], response.filename, { type: response.mimeType })
-            const dt = new DataTransfer()
-            dt.items.add(file)
-            el.files = dt.files
-            el.dispatchEvent(new Event('change', { bubbles: true }))
+            window.FieldAgentUtils.injectFile(el, response)
             resolve()
           } catch (err) {
             reject(err)
