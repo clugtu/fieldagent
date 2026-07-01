@@ -9,6 +9,41 @@ pre-populates them, and steps aside. You review and click Submit.
 
 ---
 
+## Why an agent, not a hardcoded schema
+
+The obvious alternative is a library of platform-specific selectors —
+`facebook: { caption: "div[aria-label='...']", ... }` — and for a while
+that works. Then Facebook redesigns their composer, the selector breaks,
+and nothing fills until someone manually hunts down the new one and ships
+a fix. Social platforms redesign frequently and without notice. A selector
+library requires constant maintenance just to stand still.
+
+An agent reads the page the same way a person does: it looks at labels,
+placeholder text, ARIA attributes, and headings, and figures out what goes
+where from context. When the layout changes, the agent adapts without a
+code change. It can also handle things a schema can't — asking for
+clarification when a page is ambiguous, recognising that it's looking at a
+login wall instead of a composer, detecting that a multi-step flow has
+moved to the next step.
+
+**What about the platform APIs?**
+
+Official APIs exist for most of these platforms, but they are not designed
+for the use case FieldAgent targets. Facebook's Graph API requires a
+business verification process, app review, and page admin permissions
+before you can post a single thing. Pinterest's API is rate-limited, has
+a separate approval tier for write access, and doesn't support all content
+types. Instagram's API works through a Facebook Business account and is
+similarly restricted. In practice, the full-featured posting experience
+these platforms offer to their own logged-in users is simply not available
+to third-party developers via API.
+
+FieldAgent operates as the logged-in user, in their own browser, with
+their own session — which means it has access to exactly the same
+capabilities they do.
+
+---
+
 ## How it works
 
 1. A producer (your app, a CLI call, anything) enqueues a task via the
