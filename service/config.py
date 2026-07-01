@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     logs_dir: str = "./logs"
     db_path: str = "./fieldagent.db"
+    llm_model: str = "claude-sonnet-4-6"
+    llm_provider: str = "anthropic"
 
     @property
     def api_keys(self) -> list[str]:
