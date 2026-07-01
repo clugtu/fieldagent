@@ -109,6 +109,15 @@
         port.postMessage({ type: 'INSPECT', taskId: task.task_id, snapshot })
       })
 
+      if (result.status === 'complete') {
+        // Agent detected a success/confirmation page — mark the task done
+        chrome.runtime.sendMessage({
+          type: 'TASK_COMPLETE',
+          resultUrl: window.location.href,
+        }).catch(() => {})
+        return
+      }
+
       // Notify side panel so it can display the instructions
       chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
 
@@ -140,6 +149,9 @@
     if (message.type === 'INSPECT_NOW') {
       lastSnapshotUrl = null // force re-inspect even if URL hasn't changed
       scheduleInspect(300)
+    }
+    if (message.type === 'APPLY_INSTRUCTIONS' && message.payload?.instructions?.length) {
+      applyInstructions(message.payload.instructions, message.payload.task_id)
     }
   })
 

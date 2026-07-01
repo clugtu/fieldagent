@@ -101,10 +101,8 @@ async function pollForTask() {
   await setActiveTask(task)
   console.log('[FieldAgent] Task acquired:', task.task_id, task.payload.platform)
 
-  // Notify the side panel and any open content scripts
   chrome.runtime.sendMessage({ type: 'TASK_ACQUIRED', task }).catch(() => {})
 
-  // Find the active tab — if it's on the right platform, trigger an inspect
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
   const tab = tabs[0]
   if (tab) {
@@ -160,9 +158,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break
         }
 
+        case 'ANSWER_QUESTION': {
+          if (!task) { sendResponse({ error: 'No active task' }); return }
+          const result = await apiFetch(`/inspect/respond/${task.task_id}`, {
+            method: 'POST',
+            body: JSON.stringify({ answer: message.answer }),
+          })
+          if (!result || result._error) {
+            sendResponse({ error: 'Failed to submit answer' })
+          } else {
+            chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+            if (tabs[0] && result.instructions?.length) {
+              chrome.tabs.sendMessage(tabs[0].id, { type: 'APPLY_INSTRUCTIONS', payload: result }).catch(() => {})
+            }
+            sendResponse({ payload: result })
+          }
+          break
+        }
+
         case 'CLEAR_TASK': {
           await clearActiveTask()
           sendResponse({ type: 'OK' })
+          pollForTask() // pick up a pending task immediately instead of waiting for the alarm
           break
         }
       }
@@ -191,12 +209,11 @@ chrome.runtime.onConnect.addListener((port) => {
         body: JSON.stringify({ task_id: msg.taskId, snapshot: msg.snapshot }),
       })
       if (!result || result._error) {
-        if (result?.status === 404) {
-          // Service forgot the task (restart wiped in-memory store) — clear
-          // local state so the poller picks up a fresh task next cycle
-          console.warn('[FieldAgent] Task not found on service (service restarted?), clearing local task')
+        if (result?.status === 404 || result?.status === 409) {
+          console.warn('[FieldAgent] Task rejected by service (status', result?.status, ') — clearing local task')
           await clearActiveTask()
           chrome.runtime.sendMessage({ type: 'TASK_DONE' }).catch(() => {})
+          pollForTask()
         }
         port.postMessage({ error: `Service returned ${result?.status ?? 'no response'}` })
         return
