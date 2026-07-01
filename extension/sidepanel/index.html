@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FieldAgent</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; font-size: 13px; color: #1a1a1a; background: #f9f9f9; }
+
+    .header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 14px; border-bottom: 1px solid #e5e5e5;
+      background: white;
+    }
+    .header h1 { font-size: 14px; font-weight: 600; color: #111; }
+    .badge {
+      margin-left: auto; font-size: 10px; padding: 2px 6px;
+      border-radius: 9999px; font-weight: 600;
+    }
+    .badge.pending  { background: #fef3c7; color: #92400e; }
+    .badge.active   { background: #dbeafe; color: #1e40af; }
+    .badge.complete { background: #d1fae5; color: #065f46; }
+    .badge.none     { background: #f3f4f6; color: #6b7280; }
+
+    .section { padding: 12px 14px; border-bottom: 1px solid #f0f0f0; }
+    .section-label { font-size: 10px; font-weight: 600; text-transform: uppercase;
+                     letter-spacing: 0.05em; color: #9ca3af; margin-bottom: 6px; }
+
+    .task-card { background: white; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
+    .task-platform { font-size: 11px; font-weight: 600; color: #4f46e5; text-transform: uppercase; }
+    .task-caption { margin-top: 4px; font-size: 12px; color: #374151; line-height: 1.4;
+                    max-height: 60px; overflow: hidden; display: -webkit-box;
+                    -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+    .task-id { margin-top: 6px; font-size: 10px; color: #9ca3af; font-family: monospace; }
+
+    .instruction { display: flex; gap-8px; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+    .instruction:last-child { border-bottom: none; }
+    .instruction-field { font-size: 11px; color: #6b7280; flex-shrink: 0; width: 90px;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .instruction-value { font-size: 11px; color: #111; flex: 1;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .empty { padding: 24px 14px; text-align: center; color: #9ca3af; font-size: 12px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: 500;
+      border: none; cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: #4f46e5; color: white; }
+    .btn-primary:hover:not(:disabled) { background: #4338ca; }
+    .btn-ghost { background: #f3f4f6; color: #374151; }
+    .btn-ghost:hover:not(:disabled) { background: #e5e7eb; }
+
+    .actions { display: flex; gap: 8px; padding: 12px 14px; }
+
+    .notes { margin-top: 8px; font-size: 11px; color: #6b7280; font-style: italic;
+             background: #f9fafb; padding: 6px 8px; border-radius: 4px; }
+
+    a.settings-link { display: block; text-align: center; padding: 10px;
+                      font-size: 11px; color: #9ca3af; text-decoration: none; }
+    a.settings-link:hover { color: #4f46e5; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>FieldAgent</h1>
+    <span class="badge none" id="status-badge">No task</span>
+  </div>
+
+  <div id="no-task" class="empty">
+    No active task. Go to your app and click "Post Manually" to begin.
+  </div>
+
+  <div id="task-section" class="section" style="display:none">
+    <div class="section-label">Active Task</div>
+    <div class="task-card">
+      <div class="task-platform" id="task-platform"></div>
+      <div class="task-caption" id="task-caption"></div>
+      <div class="task-id" id="task-id"></div>
+    </div>
+  </div>
+
+  <div id="instructions-section" class="section" style="display:none">
+    <div class="section-label">Last Fill Instructions</div>
+    <div id="instructions-list"></div>
+    <div class="notes" id="agent-notes" style="display:none"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-reinspect" disabled>Re-inspect page</button>
+    <button class="btn btn-ghost"   id="btn-clear"     disabled>Clear task</button>
+  </div>
+
+  <a href="../options/index.html" class="settings-link" target="_blank">⚙ Settings</a>
+
+  <script src="panel.js"></script>
+</body>
+</html>
