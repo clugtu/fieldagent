@@ -30,9 +30,7 @@ jobs:
         run: ruff format --check service/
 
       - name: Import check
-        run: |
-          cd service
-          python -c "from main import app; print('Service imports OK')"
+        run: PYTHONPATH=. python -c "from service.main import app; print('Service imports OK')"
         env:
           ANTHROPIC_API_KEY: placeholder
           FIELDAGENT_API_KEYS: placeholder
