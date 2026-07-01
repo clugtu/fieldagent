@@ -10,4 +10,3 @@ service/logs/
 logs/
 service/*.db
 *.db
-

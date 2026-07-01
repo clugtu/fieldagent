@@ -50,6 +50,21 @@
     })
   }
 
+  // ─── Submit watcher ─────────────────────────────────────────────────────────
+  // After filling a form, re-inspect 2s after the user submits so the agent
+  // can detect in-page success states (banners, modals) without navigation.
+
+  function watchForSubmit() {
+    const form = document.querySelector('form')
+    if (!form || form === submitWatchedForm) return
+    submitWatchedForm = form
+    form.addEventListener('submit', () => {
+      submitWatchedForm = null
+      lastSnapshotUrl = null
+      scheduleInspect(2000)
+    }, { once: true })
+  }
+
   // ─── Apply instructions ─────────────────────────────────────────────────────
 
   async function applyInstructions(instructions, taskId) {
@@ -116,6 +131,7 @@
       // Apply instructions to the page
       if (result?.instructions?.length) {
         await applyInstructions(result.instructions, task.task_id)
+        watchForSubmit()
       }
     } finally {
       inspectInProgress = false
