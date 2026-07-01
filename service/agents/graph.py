@@ -59,7 +59,9 @@ class InspectorState(TypedDict):
 
 
 def _llm() -> ChatAnthropic:
-    return ChatAnthropic(model="claude-sonnet-4-6", temperature=0, api_key=settings.anthropic_api_key)
+    return ChatAnthropic(
+        model="claude-sonnet-4-6", temperature=0, api_key=settings.anthropic_api_key
+    )
 
 
 # ─── Nodes ───────────────────────────────────────────────────────────────────
@@ -131,7 +133,9 @@ def analyze(state: InspectorState) -> dict:
         logger.warning("analyze: could not parse LLM response, defaulting to fill")
         parsed = {"decision": "fill"}
 
-    logger.info("analyze decision: %s task=%s", parsed.get("decision"), state["task_id"])
+    logger.info(
+        "analyze decision: %s task=%s", parsed.get("decision"), state["task_id"]
+    )
     return {
         "messages": msgs + [response],
         "_analyze_result": parsed,
@@ -182,7 +186,9 @@ def fill(state: InspectorState) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("fill: could not parse LLM response for task=%s", state["task_id"])
+        logger.warning(
+            "fill: could not parse LLM response for task=%s", state["task_id"]
+        )
         parsed = {"instructions": [], "notes": "Parse error in fill node"}
 
     return {

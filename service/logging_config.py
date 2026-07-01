@@ -55,7 +55,9 @@ def setup_logging(
 
     _logging_initialized = True
     if not was_initialized:
-        root.info("Logging initialized: level=%s dir=%s", level.upper(), log_path.resolve())
+        root.info(
+            "Logging initialized: level=%s dir=%s", level.upper(), log_path.resolve()
+        )
 
     return root
 
