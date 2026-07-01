@@ -1,0 +1,18 @@
+services:
+  fieldagent:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - fieldagent-data:/app/data
+    env_file:
+      - path: service/.env
+        required: false
+    environment:
+      # Pin DB and logs inside the named volume so data survives container restarts
+      DB_PATH: /app/data/fieldagent.db
+      LOGS_DIR: /app/data/logs
+    restart: unless-stopped
+
+volumes:
+  fieldagent-data:

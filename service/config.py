@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     port: int = 8080
     log_level: str = "INFO"
     logs_dir: str = "./logs"
+    db_path: str = "./fieldagent.db"
 
     @property
     def api_keys(self) -> list[str]:

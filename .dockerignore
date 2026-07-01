@@ -1,0 +1,11 @@
+.git/
+.github/
+extension/
+service/.venv/
+service/__pycache__/
+service/**/__pycache__/
+service/tests/
+service/fieldagent.db
+service/logs/
+*.pyc
+node_modules/
