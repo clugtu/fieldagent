@@ -117,6 +117,39 @@
     }, { once: true })
   }
 
+  // ─── Event-driven waiting ───────────────────────────────────────────────────
+  // Wait until a CSS selector matches something in the DOM, or maxWait ms pass.
+  // Resolves with the element (or null on timeout). Faster and more robust than
+  // fixed sleeps because it fires the moment the element actually appears.
+
+  function waitForElement(selector, maxWait = 3000) {
+    return new Promise((resolve) => {
+      const existing = document.querySelector(selector)
+      if (existing) { resolve(existing); return }
+      const obs = new MutationObserver(() => {
+        const el = document.querySelector(selector)
+        if (el) { obs.disconnect(); resolve(el) }
+      })
+      obs.observe(document.body, { childList: true, subtree: true })
+      setTimeout(() => { obs.disconnect(); resolve(null) }, maxWait)
+    })
+  }
+
+  // Wait until resolveElement can find the instruction's target.
+  // Used after a click opens a dropdown whose contents aren't in the DOM yet.
+  function waitForTarget(ins, maxWait = 1500) {
+    return new Promise((resolve) => {
+      const existing = window.FieldAgentUtils.resolveElement({ ...ins, action: 'type' })
+      if (existing) { resolve(existing); return }
+      const obs = new MutationObserver(() => {
+        const el = window.FieldAgentUtils.resolveElement({ ...ins, action: 'type' })
+        if (el) { obs.disconnect(); resolve(el) }
+      })
+      obs.observe(document.body, { childList: true, subtree: true })
+      setTimeout(() => { obs.disconnect(); resolve(null) }, maxWait)
+    })
+  }
+
   // ─── Apply instructions ─────────────────────────────────────────────────────
 
   async function applyInstructions(instructions, taskId) {
@@ -176,34 +209,27 @@
         }, 3_000)
         break
       } else if (ins.action === 'pick') {
-        // Type text into a field, wait for the autocomplete dropdown, click first option.
-        // Used for Pinterest tags: typing alone doesn't add the tag, you must pick from
-        // the suggestions list. Tags are pre-validated server-side so a match will appear.
-        const el = window.FieldAgentUtils.resolveElement({ ...ins, action: 'type' })
+        // Type text into a field, wait for autocomplete, click first option.
+        // If the target isn't in the DOM yet (e.g. board search inside a just-opened
+        // dropdown), waitForTarget waits until a DOM mutation makes it findable.
+        const el = await waitForTarget(ins, 1500)
         if (el) {
           window.FieldAgentUtils.applyTextFill(el, ins.value)
-          // Wait for autocomplete dropdown to populate
-          await new Promise((r) => setTimeout(r, 700))
-          const option = document.querySelector('[role="option"]')
+          // Event-driven: resolves the moment [role="option"] appears, not after a fixed delay.
+          const option = await waitForElement('[role="option"]', 3000)
           if (option) {
             option.click()
           } else {
-            // Fallback: press Enter in case this specific field accepts it
             el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
           }
-          // Brief pause before the next tag so the field resets
-          await new Promise((r) => setTimeout(r, 300))
+          // Minimal pause for chip/option DOM to settle before the next pick.
+          await new Promise((r) => setTimeout(r, 150))
         }
       } else if (ins.action === 'attach_file') {
         const el = window.FieldAgentUtils.resolveElement(ins)
         if (el) await applyFileAttach(el, ins, taskId).catch(console.warn)
       } else {
         applyInstruction(ins)
-        // After a click, pause so dropdowns/modals have time to open before
-        // the next instruction runs (board picker needs ~300 ms to animate open).
-        if (ins.action === 'click') {
-          await new Promise((r) => setTimeout(r, 350))
-        }
       }
     }
   }
