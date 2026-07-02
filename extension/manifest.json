@@ -8,7 +8,9 @@
     "storage",
     "activeTab",
     "sidePanel",
-    "alarms"
+    "alarms",
+    "downloads",
+    "debugger"
   ],
 
   "host_permissions": [

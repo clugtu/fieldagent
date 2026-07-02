@@ -27,7 +27,66 @@
   let inspectDebounceTimer = null
   let lastSnapshotUrl = null
   let inspectInProgress = false
-  let submitWatchedForm = null
+
+  // ─── URL-lock + post-publish navigation ─────────────────────────────────────
+  // Each task is locked to the URL where it was first inspected.  This prevents
+  // the agent from running on unrelated pages (pin detail pages, other forms,
+  // etc.) after SPA navigation.  One exception: when the user clicks Publish,
+  // we allow one post-navigate inspect on the resulting page so the LLM can
+  // detect the success state and auto-close the task.
+
+  let taskStartUrl = null        // locked when the first inspect for this task runs
+  let allowPostNavInspect = false  // lifted once after the user clicks Publish
+
+  // Reset per-task state when the active task changes.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !('activeTask' in changes)) return
+    const prev = changes.activeTask?.oldValue
+    const next = changes.activeTask?.newValue
+    if (!next || (prev && prev.task_id !== next.task_id)) {
+      taskStartUrl = null
+      allowPostNavInspect = false
+      chrome.storage.local.remove('lastInspectResult').catch(() => {})
+    }
+  })
+
+  // Intercept SPA navigation (Pinterest uses history.pushState, not page loads).
+  // When Publish triggers a navigate, do one final inspect to detect success.
+  const _origPush = history.pushState.bind(history)
+  history.pushState = function (...args) {
+    _origPush(...args)
+    if (allowPostNavInspect) {
+      allowPostNavInspect = false
+      lastSnapshotUrl = null
+      scheduleInspect(800)
+    }
+  }
+  window.addEventListener('popstate', () => {
+    if (allowPostNavInspect) {
+      allowPostNavInspect = false
+      lastSnapshotUrl = null
+      scheduleInspect(800)
+    }
+  })
+
+  // Detect the Publish button click so we can allow one post-navigate inspect.
+  document.addEventListener('click', (e) => {
+    const btn = e.target?.closest('button, [role="button"]')
+    if (!btn) return
+    const text = (btn.textContent?.trim() || btn.getAttribute('aria-label') || '').toLowerCase()
+    if (text === 'publish' || text === 'post') {
+      allowPostNavInspect = true
+      // Fallback: if Pinterest stays on the same URL (no pushState), inspect in
+      // place after 4 s to catch success banners.
+      setTimeout(() => {
+        if (allowPostNavInspect) {
+          allowPostNavInspect = false
+          lastSnapshotUrl = null
+          scheduleInspect(200)
+        }
+      }, 4000)
+    }
+  }, true)
 
   // ─── File attachment ────────────────────────────────────────────────────────
 
@@ -102,21 +161,6 @@
     }, 3 * 60 * 1000)
   }
 
-  // ─── Submit watcher ─────────────────────────────────────────────────────────
-  // After filling a form, re-inspect 2s after the user submits so the agent
-  // can detect in-page success states (banners, modals) without navigation.
-
-  function watchForSubmit() {
-    const form = document.querySelector('form')
-    if (!form || form === submitWatchedForm) return
-    submitWatchedForm = form
-    form.addEventListener('submit', () => {
-      submitWatchedForm = null
-      lastSnapshotUrl = null
-      scheduleInspect(2000)
-    }, { once: true })
-  }
-
   // ─── Event-driven waiting ───────────────────────────────────────────────────
   // Wait until a CSS selector matches something in the DOM, or maxWait ms pass.
   // Resolves with the element (or null on timeout). Faster and more robust than
@@ -150,9 +194,23 @@
     })
   }
 
+  // ─── User-change detection ──────────────────────────────────────────────────
+  // When the user manually types or interacts with the page (outside our
+  // instruction application), re-inspect so MiniForge stays in sync.
+
+  let applyingInstructions = false
+
+  document.addEventListener('input', () => {
+    if (applyingInstructions) return
+    lastSnapshotUrl = null
+    scheduleInspect(1200)
+  }, true) // capture phase — sees events before React
+
   // ─── Apply instructions ─────────────────────────────────────────────────────
 
   async function applyInstructions(instructions, taskId) {
+    applyingInstructions = true
+    try {
     for (const ins of instructions) {
       if (ins.action === 'paste_file') {
         if (lastUploadTaskId === taskId) {
@@ -215,15 +273,42 @@
         const el = await waitForTarget(ins, 1500)
         if (el) {
           window.FieldAgentUtils.applyTextFill(el, ins.value)
-          // Event-driven: resolves the moment [role="option"] appears, not after a fixed delay.
-          const option = await waitForElement('[role="option"]', 3000)
+          // Event-driven: resolves the moment an option appears. Pinterest's board
+          // picker uses [role="option"] inside a [role="listbox"]; [role="menuitem"]
+          // and [aria-selected] cover other platforms / edge cases.
+          const option = await waitForElement('[role="option"], [role="menuitem"], [aria-selected="false"]', 3000)
           if (option) {
             option.click()
           } else {
+            // Keyboard fallback: Down to highlight the first item, Enter to confirm.
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true }))
+            await new Promise((r) => setTimeout(r, 80))
             el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
           }
           // Minimal pause for chip/option DOM to settle before the next pick.
           await new Promise((r) => setTimeout(r, 150))
+        }
+      } else if (ins.action === 'click') {
+        // Try immediately; if the element isn't in the DOM yet (e.g. a section
+        // picker that appears after the board pick above), wait up to 2 s for a
+        // DOM mutation that makes it findable.  This lets the LLM emit board +
+        // section click instructions in one response instead of needing a second
+        // inspect pass.
+        let el = window.FieldAgentUtils.resolveElement(ins)
+        if (!el) el = await waitForTarget(ins, 2000)
+        if (el) {
+          el.click()
+        } else {
+          // Log what was available so we can diagnose the missing selector.
+          const sel = ins.selector_hint || ''
+          const hint = ins.fallback_hint || ''
+          const available = Array.from(document.querySelectorAll('button, [role="button"], [role="option"]'))
+            .map((b) => `<${b.tagName.toLowerCase()} aria-label="${b.getAttribute('aria-label') || ''}" text="${(b.textContent?.trim() || '').slice(0, 40)}">`)
+            .slice(0, 20)
+          console.warn(
+            `[FieldAgent] click: element not found | selector="${sel}" fallback="${hint}"\n`,
+            'Available buttons/options:', available,
+          )
         }
       } else if (ins.action === 'attach_file') {
         const el = window.FieldAgentUtils.resolveElement(ins)
@@ -231,6 +316,9 @@
       } else {
         applyInstruction(ins)
       }
+    }
+    } finally {
+      applyingInstructions = false
     }
   }
 
@@ -247,6 +335,19 @@
         chrome.storage.local.get('activeTask', resolve)
       )
       if (!task) return
+
+      // URL-lock: only inspect the page where the task originally started.
+      // This prevents the agent from running fill instructions on pin detail
+      // pages, other forms, etc. after SPA navigation.
+      // allowPostNavInspect lifts the lock once after the Publish button is clicked.
+      const currentUrl = window.location.href
+      if (!taskStartUrl) {
+        taskStartUrl = currentUrl
+      } else if (currentUrl !== taskStartUrl) {
+        if (!allowPostNavInspect) return
+        allowPostNavInspect = false
+        // This is the one post-publish inspect — let it through unchanged.
+      }
 
       const snapshot = extractSnapshot(platform)
 
@@ -288,23 +389,20 @@
         return
       }
 
-      // Notify side panel so it can display the instructions
+      // Notify side panel so it can display the instructions; also persist so
+      // the panel can restore history when reopened mid-task.
       chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
+      chrome.storage.local.set({ lastInspectResult: { taskId: task.task_id, payload: result } }).catch(() => {})
 
       // Apply instructions to the page
       if (result?.instructions?.length) {
         await applyInstructions(result.instructions, task.task_id)
-        watchForSubmit()
-        // After any non-paste instructions, schedule a follow-up inspect so
-        // multi-step UI flows (board section picker, tag confirmation, etc.)
-        // are caught in the next cycle rather than silently dropped.
-        const hasNonFile = result.instructions.some(
-          (i) => i.action !== 'paste_file' && i.action !== 'attach_file'
-        )
-        if (hasNonFile && !uploadJustCompleted) {
-          lastSnapshotUrl = null
-          scheduleInspect(1500)
-        }
+        // No automatic re-inspect here — re-inspection only happens from:
+        //  • user input events (user typed/clicked something on the page)
+        //  • upload completion (watchForFormChange / UPLOAD_DONE)
+        //  • Publish button click (allowPostNavInspect flow)
+        //  • user clicking Re-inspect in the panel
+        // Automatic cycling risks filling the wrong draft in Pinterest's sidebar.
       }
     } finally {
       inspectInProgress = false

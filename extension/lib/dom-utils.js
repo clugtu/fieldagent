@@ -19,11 +19,62 @@ function nearestLabel(el) {
   return ''
 }
 
+// Find the active editing container on the page.
+// On tools like Pinterest's creation tool (single URL, multiple draft panels in
+// the DOM), document.querySelectorAll picks up fields from every draft — the
+// sidebar, background panels, etc.  Scoping to the active editor prevents the
+// LLM from seeing a confusing mix of inputs from multiple drafts.
+//
+// Strategy: the [aria-label="note"] contenteditable only exists inside the
+// currently selected draft's editing pane.  Walk up from it to find the
+// tightest ancestor that contains at least 3 form-like elements (title input,
+// note field, link input), which is the active editor container.
+// A second, slightly wider root is used for buttons/upload zones that may sit
+// just outside the form container (header, action bar).
+function _findActiveRoots() {
+  // Pinterest renders ALL drafts' editors in the DOM simultaneously — only the
+  // selected draft's pane is visible.  el.offsetParent === null means the
+  // element is inside a display:none subtree (hidden panel), so we skip those
+  // and find the one that's actually on screen.
+  const note = typeof document !== 'undefined'
+    ? Array.from(document.querySelectorAll('[contenteditable][aria-label="note"]'))
+        .find((el) => el.offsetParent !== null) ?? null
+    : null
+
+  if (!note) return { formRoot: document, wideRoot: document, scoped: false }
+
+  // Walk up from the note field to find the tightest sensible form container.
+  let el = note.parentElement
+  let formRoot = null
+  for (let i = 0; i < 20 && el && el !== document.body; i++) {
+    if (el.tagName === 'FORM' || el.tagName === 'MAIN' || el.getAttribute('role') === 'main') {
+      formRoot = el
+      break
+    }
+    const editables = el.querySelectorAll('input:not([type=hidden]), textarea, [contenteditable]')
+    if (editables.length >= 3) { formRoot = el; break }
+    el = el.parentElement
+  }
+
+  if (!formRoot) {
+    // Fallback: a few levels above the note field
+    formRoot = note.parentElement?.parentElement?.parentElement || document
+  }
+
+  // The wide root goes a few levels higher to capture upload zones and action
+  // buttons (Publish, board picker) that may be siblings of the form container.
+  const wideRoot = formRoot.parentElement?.parentElement || formRoot
+
+  return { formRoot, wideRoot, scoped: true }
+}
+
 function extractSnapshot(platformHint) {
+  const { formRoot, wideRoot, scoped } = _findActiveRoots()
+
   const inputs = []
   const seen = new Set()
 
-  document.querySelectorAll('input, textarea').forEach((el) => {
+  formRoot.querySelectorAll('input, textarea').forEach((el) => {
     if (el.type === 'hidden') return
     seen.add(el)
     inputs.push({
@@ -39,7 +90,7 @@ function extractSnapshot(platformHint) {
   })
 
   // Contenteditable divs (used by Pinterest/Facebook description fields)
-  document.querySelectorAll('[contenteditable="true"]').forEach((el) => {
+  formRoot.querySelectorAll('[contenteditable="true"]').forEach((el) => {
     if (seen.has(el)) return
     seen.add(el)
     inputs.push({
@@ -55,7 +106,7 @@ function extractSnapshot(platformHint) {
   })
 
   const buttons = []
-  document.querySelectorAll('button, [role="button"], input[type="submit"]').forEach((el) => {
+  wideRoot.querySelectorAll('button, [role="button"], input[type="submit"]').forEach((el) => {
     const text = el.textContent?.trim() || el.value || el.getAttribute('aria-label') || ''
     if (!text) return
     buttons.push({
@@ -67,7 +118,7 @@ function extractSnapshot(platformHint) {
 
   // Native <select> dropdowns
   const selects = []
-  document.querySelectorAll('select').forEach((el) => {
+  formRoot.querySelectorAll('select').forEach((el) => {
     selects.push({
       name: el.name || '',
       id: el.id || '',
@@ -80,7 +131,7 @@ function extractSnapshot(platformHint) {
 
   // Custom dropdown openers (board pickers, comboboxes)
   const dropdowns = []
-  document.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="true"]').forEach((el) => {
+  wideRoot.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="true"]').forEach((el) => {
     const text = el.textContent?.trim().slice(0, 120) || ''
     const label = el.getAttribute('aria-label') || ''
     if (!text && !label) return
@@ -94,7 +145,7 @@ function extractSnapshot(platformHint) {
   })
 
   const headings = []
-  document.querySelectorAll('h1, h2, h3').forEach((el) => {
+  wideRoot.querySelectorAll('h1, h2, h3').forEach((el) => {
     const text = el.textContent.trim()
     if (text) headings.push(text)
   })
@@ -103,7 +154,7 @@ function extractSnapshot(platformHint) {
   // around any file input, plus elements with upload-related attributes
   const upload_zones = []
   const seenZones = new Set()
-  document.querySelectorAll('input[type="file"]').forEach((input) => {
+  wideRoot.querySelectorAll('input[type="file"]').forEach((input) => {
     // Walk up to find a labelled ancestor that looks like the drop zone
     let candidate = input.parentElement
     for (let i = 0; i < 6 && candidate; i++) {
@@ -145,8 +196,9 @@ function extractSnapshot(platformHint) {
   // or for parent elements of such buttons whose text content is the tag text.
   const chips = []
   const seenChips = new Set()
-  if (typeof document !== 'undefined') {
-    document.querySelectorAll('button, [role="button"]').forEach((btn) => {
+  const chipRoot = wideRoot !== document ? wideRoot : (typeof document !== 'undefined' ? document : null)
+  if (chipRoot) {
+    chipRoot.querySelectorAll('button, [role="button"]').forEach((btn) => {
       const label = btn.getAttribute('aria-label') || ''
       const lc = label.toLowerCase()
       // Pattern 1: aria-label = "Remove <tag>" or "Delete tag <tag>"
@@ -175,6 +227,10 @@ function extractSnapshot(platformHint) {
     url: typeof window !== 'undefined' ? window.location.href : '',
     title: typeof document !== 'undefined' ? document.title : '',
     platform_hint: platformHint || 'unknown',
+    // scoped_to_active_editor: true means the snapshot was narrowed to the
+    // currently active editing pane, not the full document.  Fields from other
+    // draft panels, sidebars, or background elements are excluded.
+    scoped_to_active_editor: scoped,
     inputs,
     buttons,
     headings,
@@ -210,7 +266,7 @@ function resolveElement(instruction) {
 
   const candidates = document.querySelectorAll(tag)
   for (const el of candidates) {
-    const text = [
+    const elText = [
       el.placeholder,
       el.getAttribute('aria-label'),
       el.textContent?.trim().slice(0, 80),
@@ -220,7 +276,14 @@ function resolveElement(instruction) {
     ]
       .join(' ')
       .toLowerCase()
-    if (hint.split(' ').some((word) => word.length > 3 && text.includes(word))) {
+    // Short hints (≤3 chars, e.g. ">") need an exact text-content match so they
+    // don't get silently skipped by the word-length guard below.
+    if (hint.length <= 3) {
+      if (
+        el.textContent?.trim().toLowerCase() === hint ||
+        el.getAttribute('aria-label')?.toLowerCase() === hint
+      ) return el
+    } else if (hint.split(' ').some((word) => word.length > 3 && elText.includes(word))) {
       return el
     }
   }
@@ -237,16 +300,25 @@ function applyTextFill(el, value) {
   // contenteditable divs (common in React rich-text editors like Pinterest's)
   // don't have a .value property — set textContent instead.
   if (el.isContentEditable) {
-    el.click()
     el.focus()
-    // Use the Selection API to select the element's content before insertText.
-    // execCommand('selectAll') can select outside the element in some browsers;
-    // selectNodeContents() is scoped to this element only.
+    // Select all existing content so the paste replaces rather than appends.
+    // Selection API does NOT modify the DOM — no React removeChild risk.
     const range = document.createRange()
     range.selectNodeContents(el)
     const sel = window.getSelection()
     if (sel) { sel.removeAllRanges(); sel.addRange(range) }
-    document.execCommand('insertText', false, value)
+
+    // Draft.js checks event.isTrusted and silently ignores synthetic InputEvents
+    // (beforeinput approach, defaultPrevented always false). It does honour
+    // ClipboardEvent paste: its onPaste handler reads clipboardData.getData()
+    // and calls onChange with the new EditorState — React reconciles cleanly.
+    const dt = new DataTransfer()
+    dt.setData('text/plain', value)
+    el.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dt,
+    }))
     return
   }
 

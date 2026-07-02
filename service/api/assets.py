@@ -12,7 +12,7 @@ from service.store import task_store
 router = APIRouter(prefix="/assets", tags=["assets"])
 
 
-@router.get("/{task_id}/{asset_id}")
+@router.get("/{task_id}/{asset_id:path}")
 async def get_asset(
     task_id: str,
     asset_id: str,

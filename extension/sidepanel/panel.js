@@ -143,6 +143,7 @@ function clearHistory() {
   instructionsSection.style.display = 'none'
   instructionsList.innerHTML = ''
   agentNotes.style.display = 'none'
+  chrome.storage.local.remove('lastInspectResult').catch(() => {})
 }
 
 function renderInstructions(payload) {
@@ -189,11 +190,17 @@ async function submitAnswer(taskId, _questionId) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-checkConfig().then((configured) => {
+checkConfig().then(async (configured) => {
   if (!configured) return
   chrome.runtime.sendMessage({ type: 'GET_ACTIVE_TASK' }, (response) => {
     renderTask(response?.task || null)
   })
+  // Restore instruction history from the last inspect pass so the panel shows
+  // context even when opened after instructions were already applied.
+  const { lastInspectResult } = await chrome.storage.local.get('lastInspectResult')
+  if (lastInspectResult?.payload) {
+    renderInstructions(lastInspectResult.payload)
+  }
 })
 
 // Stay in sync with storage directly — don't rely solely on TASK_ACQUIRED

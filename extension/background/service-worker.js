@@ -369,7 +369,6 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage({ error: `Service returned ${result?.status ?? 'no response'}` })
         return
       }
-      chrome.runtime.sendMessage({ type: 'INSTRUCTIONS_UPDATE', payload: result }).catch(() => {})
       port.postMessage(result)
     } catch (err) {
       port.postMessage({ error: err.message })
