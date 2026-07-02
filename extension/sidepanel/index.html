@@ -34,11 +34,17 @@
                     -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
     .task-id { margin-top: 6px; font-size: 10px; color: #9ca3af; font-family: monospace; }
 
-    .instruction { display: flex; gap-8px; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+    .instruction { display: flex; align-items: baseline; gap: 6px; padding: 5px 0; border-bottom: 1px solid #f3f4f6; flex-wrap: wrap; }
     .instruction:last-child { border-bottom: none; }
-    .instruction-field { font-size: 11px; color: #6b7280; flex-shrink: 0; width: 90px;
+    .instruction-action { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+                          padding: 1px 5px; border-radius: 4px; flex-shrink: 0;
+                          background: #e0e7ff; color: #3730a3; }
+    .instruction-action[title="click"]      { background: #fce7f3; color: #9d174d; }
+    .instruction-action[title="pick"]       { background: #d1fae5; color: #065f46; }
+    .instruction-action[title="paste_file"] { background: #fef3c7; color: #92400e; }
+    .instruction-field { font-size: 11px; color: #6b7280; flex-shrink: 0; max-width: 100px;
                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .instruction-value { font-size: 11px; color: #111; flex: 1;
+    .instruction-value { font-size: 11px; color: #111; flex: 1; min-width: 0;
                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .empty { padding: 24px 14px; text-align: center; color: #9ca3af; font-size: 12px; }
@@ -58,6 +64,14 @@
 
     .notes { margin-top: 8px; font-size: 11px; color: #6b7280; font-style: italic;
              background: #f9fafb; padding: 6px 8px; border-radius: 4px; }
+
+    .upload-prompt { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px;
+                     padding: 10px 12px; }
+    .upload-prompt .up-title { font-size: 12px; font-weight: 600; color: #92400e; margin-bottom: 4px; }
+    .upload-prompt .up-file  { font-size: 11px; font-family: monospace; color: #374151;
+                               background: white; border: 1px solid #e5e7eb; border-radius: 4px;
+                               padding: 4px 6px; margin-bottom: 8px; word-break: break-all; }
+    .upload-prompt .up-hint  { font-size: 11px; color: #78350f; line-height: 1.4; }
 
     a.settings-link { display: block; text-align: center; padding: 10px;
                       font-size: 11px; color: #9ca3af; text-decoration: none; }
@@ -96,6 +110,23 @@
     <textarea id="question-answer" rows="2" placeholder="Your answer…"
       style="width:100%;font-size:12px;padding:6px 8px;border:1px solid #d1d5db;border-radius:5px;resize:vertical"></textarea>
     <button id="btn-answer" class="btn btn-primary" style="margin-top:6px;width:100%">Send answer</button>
+  </div>
+
+  <div id="upload-section" class="section" style="display:none">
+    <div class="section-label" id="upload-section-label">Image upload</div>
+    <div class="upload-prompt" id="upload-prompt-ready" style="display:none">
+      <div class="up-title">👆 Click the upload area on Pinterest</div>
+      <div class="up-file" id="upload-filename-ready"></div>
+      <div class="up-hint">The extension will intercept the file dialog and supply the image automatically — no dialog will appear.</div>
+    </div>
+    <div class="upload-prompt" id="upload-prompt-done" style="display:none;background:#f0fdf4;border-color:#86efac">
+      <div class="up-title" style="color:#166534">✓ Image uploaded — filling form…</div>
+    </div>
+    <div class="upload-prompt" id="upload-prompt-fallback" style="display:none">
+      <div class="up-title">📎 Image saved to Downloads</div>
+      <div class="up-file" id="upload-filename-fallback"></div>
+      <div class="up-hint">Upload it manually, then click <strong>Re-inspect</strong> to continue.</div>
+    </div>
   </div>
 
   <div id="instructions-section" class="section" style="display:none">

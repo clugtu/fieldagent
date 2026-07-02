@@ -9,6 +9,12 @@ const questionSection = document.getElementById('question-section')
 const questionText = document.getElementById('question-text')
 const questionAnswer = document.getElementById('question-answer')
 const btnAnswer = document.getElementById('btn-answer')
+const uploadSection = document.getElementById('upload-section')
+const uploadPromptReady = document.getElementById('upload-prompt-ready')
+const uploadFilenameReady = document.getElementById('upload-filename-ready')
+const uploadPromptDone = document.getElementById('upload-prompt-done')
+const uploadPromptFallback = document.getElementById('upload-prompt-fallback')
+const uploadFilenameFallback = document.getElementById('upload-filename-fallback')
 const instructionsSection = document.getElementById('instructions-section')
 const instructionsList = document.getElementById('instructions-list')
 const agentNotes = document.getElementById('agent-notes')
@@ -22,6 +28,11 @@ function openSettings() {
 
 document.getElementById('btn-open-settings').addEventListener('click', openSettings)
 document.getElementById('btn-settings').addEventListener('click', openSettings)
+
+// Keep the service worker alive while the panel is open.
+// An open port prevents MV3 SW termination, which matters when we're waiting
+// for the user to click the upload area (CDP file chooser interception).
+const _keepAlivePort = chrome.runtime.connect({ name: 'keepalive' })
 
 // ─── Config check ─────────────────────────────────────────────────────────────
 
@@ -67,6 +78,35 @@ function renderTask(task) {
   btnComplete.disabled = false
 }
 
+function showUploadReady(filename) {
+  uploadFilenameReady.textContent = filename
+  uploadPromptReady.style.display = ''
+  uploadPromptDone.style.display = 'none'
+  uploadPromptFallback.style.display = 'none'
+  uploadSection.style.display = ''
+}
+
+function showUploadDone() {
+  uploadPromptReady.style.display = 'none'
+  uploadPromptDone.style.display = ''
+  uploadPromptFallback.style.display = 'none'
+  uploadSection.style.display = ''
+  // Auto-hide after the re-inspect has time to fire
+  setTimeout(hideUploadPrompt, 4000)
+}
+
+function showUploadFallback(filename) {
+  uploadFilenameFallback.textContent = filename
+  uploadPromptReady.style.display = 'none'
+  uploadPromptDone.style.display = 'none'
+  uploadPromptFallback.style.display = ''
+  uploadSection.style.display = ''
+}
+
+function hideUploadPrompt() {
+  uploadSection.style.display = 'none'
+}
+
 function renderInstructions(payload) {
   questionSection.style.display = 'none'
   instructionsSection.style.display = 'none'
@@ -84,13 +124,20 @@ function renderInstructions(payload) {
   }
 
   if (payload.instructions?.length) {
+    console.log('[FieldAgent] instructions:', JSON.stringify(payload.instructions, null, 2))
     instructionsSection.style.display = ''
-    instructionsList.innerHTML = payload.instructions.map((ins) => `
-      <div class="instruction">
-        <span class="instruction-field" title="${ins.fallback_hint}">${ins.fallback_hint}</span>
-        <span class="instruction-value" title="${ins.value}">${ins.value}</span>
-      </div>
-    `).join('')
+    instructionsList.innerHTML = payload.instructions.map((ins) => {
+      const action = ins.action || 'type'
+      const field = ins.fallback_hint || ins.selector_hint || '?'
+      const val = ins.value != null
+        ? (ins.value.length > 60 ? ins.value.slice(0, 60) + '…' : ins.value)
+        : (ins.asset_id ? `[file: ${ins.asset_id}]` : '')
+      return `<div class="instruction">
+        <span class="instruction-action" title="${action}">${action}</span>
+        <span class="instruction-field" title="${ins.fallback_hint}">${field}</span>
+        ${val ? `<span class="instruction-value" title="${ins.value}">${val}</span>` : ''}
+      </div>`
+    }).join('')
   }
 
   if (payload.notes) {
@@ -148,17 +195,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'TASK_ACQUIRED') renderTask(message.task)
   if (message.type === 'INSTRUCTIONS_UPDATE') renderInstructions(message.payload)
+  if (message.type === 'UPLOAD_READY') showUploadReady(message.filename)
+  if (message.type === 'UPLOAD_DONE') showUploadDone()
+  if (message.type === 'UPLOAD_NEEDED') showUploadFallback(message.filename)
   if (message.type === 'TASK_DONE') {
     renderTask(null)
     renderInstructions(null)
-  }
-  if (message.type === 'TASK_DONE') {
-    renderTask(null)
-    renderInstructions(null)
+    hideUploadPrompt()
   }
 })
 
 btnReinspect.addEventListener('click', async () => {
+  hideUploadPrompt()
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   if (tab) chrome.tabs.sendMessage(tab.id, { type: 'INSPECT_NOW' }).catch(() => {})
 })
