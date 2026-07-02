@@ -173,7 +173,7 @@
             lastSnapshotUrl = null
             scheduleInspect(200)
           }
-        }, 10_000)
+        }, 3_000)
         break
       } else if (ins.action === 'pick') {
         // Type text into a field, wait for the autocomplete dropdown, click first option.

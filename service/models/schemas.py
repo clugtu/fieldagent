@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaskStatus(str, Enum):
@@ -90,6 +90,8 @@ class ButtonElement(BaseModel):
 
 
 class DomSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     url: str
     title: str
     platform_hint: str
@@ -97,15 +99,16 @@ class DomSnapshot(BaseModel):
     buttons: list[ButtonElement] = Field(default_factory=list)
     headings: list[str] = Field(default_factory=list)
     selects: list[dict[str, Any]] = Field(default_factory=list)
+    dropdowns: list[dict[str, Any]] = Field(default_factory=list)
     snapshot_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class FillInstruction(BaseModel):
     selector_hint: str
     fallback_hint: str
-    value: str
-    action: str = "type"  # "type" | "select" | "focus" | "attach_file"
-    asset_id: str | None = None  # set when action == "attach_file"
+    value: str | None = None  # None for attach_file actions
+    action: str = "type"  # "type" | "select" | "focus" | "attach_file" | "paste_file" | "click" | "press_enter"
+    asset_id: str | None = None  # set when action is "attach_file" or "paste_file"
 
 
 class InspectRequest(BaseModel):
