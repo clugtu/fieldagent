@@ -32,6 +32,37 @@ async function clearActiveTask() {
   await chrome.storage.local.remove('activeTask')
 }
 
+// ─── CDP file-chooser interception ───────────────────────────────────────────
+// Registered at top-level so Chrome can wake the SW to deliver the event even
+// if the SW was terminated between setting up the intercept and the user click.
+// State is persisted in chrome.storage.local so it survives SW restarts.
+
+async function _detachDebugger(tabId) {
+  return new Promise((resolve) =>
+    chrome.debugger.detach({ tabId }, () => { chrome.runtime.lastError; resolve() })
+  )
+}
+
+chrome.debugger.onEvent.addListener(async (source, method) => {
+  if (method !== 'Page.fileChooserOpened') return
+  const { pendingFileChooser } = await chrome.storage.local.get('pendingFileChooser')
+  if (!pendingFileChooser || source.tabId !== pendingFileChooser.tabId) return
+
+  await chrome.storage.local.remove('pendingFileChooser')
+
+  await new Promise((resolve) =>
+    chrome.debugger.sendCommand(
+      { tabId: pendingFileChooser.tabId },
+      'Page.handleFileChooser',
+      { action: 'accept', files: [pendingFileChooser.absolutePath] },
+      resolve
+    )
+  )
+  await _detachDebugger(pendingFileChooser.tabId)
+  chrome.runtime.sendMessage({ type: 'UPLOAD_DONE' }).catch(() => {})
+  // MutationObserver in content.js will detect the new image and re-inspect
+})
+
 // ─── Service API calls ────────────────────────────────────────────────────────
 
 async function apiFetch(path, options = {}) {
@@ -132,7 +163,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // ─── Messages from content scripts and side panel ────────────────────────────
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   ;(async () => {
     try {
       const task = await getActiveTask()
@@ -156,6 +187,126 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           const asset = await fetchAssetAsBase64(message.taskId, message.assetId)
           sendResponse(asset)
           break
+        }
+
+        case 'SETUP_FILE_UPLOAD': {
+          // Download image to disk, then use CDP Page.setInterceptFileChooserDialog
+          // so the user's single click on the upload area supplies our file automatically.
+          // The top-level chrome.debugger.onEvent handler (above) handles the event
+          // reliably even if the SW is restarted between setup and the user's click.
+          if (!task) { sendResponse({ error: 'No active task' }); return }
+          const tabId = sender.tab?.id
+          console.log('[FieldAgent] SETUP_FILE_UPLOAD received — sender tabId:', tabId, 'url:', sender.tab?.url)
+          if (!tabId) { sendResponse({ error: 'Cannot identify tab' }); return }
+
+          sendResponse({ ok: true }) // respond immediately; rest is async
+
+          // ── Resolve the tab that will receive the CDP debugger ────────────────
+          // sender.tab.id can point to a chrome-extension:// page (e.g. if the
+          // panel or another context sent the message, or if the tab navigated).
+          // CDP cannot attach to extension pages; find the real Pinterest tab.
+          const _resolveTarget = async () => {
+            try {
+              const info = await chrome.tabs.get(tabId)
+              console.log('[FieldAgent] sender tab URL:', info.url)
+              if (info.url?.startsWith('https://')) return tabId
+            } catch { /* tab gone */ }
+            // Fallback: find any open Pinterest pin-creation tab
+            const [pinTab] = await chrome.tabs.query({ url: 'https://www.pinterest.com/*' })
+            if (pinTab?.id) {
+              console.warn('[FieldAgent] sender tab unusable; falling back to Pinterest tab', pinTab.id, pinTab.url)
+              return pinTab.id
+            }
+            return null
+          }
+
+          let targetTabId = await _resolveTarget()
+          if (!targetTabId) {
+            console.error('[FieldAgent] No usable tab for CDP attach')
+            chrome.runtime.sendMessage({ type: 'UPLOAD_NEEDED', filename: 'image' }).catch(() => {})
+            return
+          }
+
+          // ── Step 1: fetch asset with auth, create data URL for download ────
+          // Using a data URL (not the service URL directly) bypasses the browser's
+          // "Ask where to save" setting — data URLs always save silently.
+          let absolutePath, assetFilename, shortName
+          try {
+            const asset = await fetchAssetAsBase64(task.task_id, message.assetId)
+            assetFilename = asset.filename || message.assetId.split('/').pop() || 'upload.jpg'
+            const dataUrl = `data:${asset.mimeType};base64,${asset.base64}`
+
+            const downloadId = await new Promise((resolve, reject) => {
+              chrome.downloads.download(
+                { url: dataUrl, filename: assetFilename, conflictAction: 'uniquify', saveAs: false },
+                (id) => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(id)
+              )
+            })
+            absolutePath = await new Promise((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('Download timed out')), 30_000)
+              const onChanged = (delta) => {
+                if (delta.id !== downloadId) return
+                if (delta.state?.current === 'complete') {
+                  clearTimeout(timer)
+                  chrome.downloads.onChanged.removeListener(onChanged)
+                  chrome.downloads.search({ id: downloadId }, ([item]) => resolve(item?.filename || null))
+                } else if (delta.state?.current === 'interrupted') {
+                  clearTimeout(timer)
+                  chrome.downloads.onChanged.removeListener(onChanged)
+                  reject(new Error('Download interrupted'))
+                }
+              }
+              chrome.downloads.onChanged.addListener(onChanged)
+            })
+          } catch (err) {
+            console.error('[FieldAgent] File download failed:', err)
+            chrome.runtime.sendMessage({ type: 'UPLOAD_NEEDED', filename: assetFilename || 'image', error: err.message }).catch(() => {})
+            return
+          }
+
+          if (!absolutePath) {
+            chrome.runtime.sendMessage({ type: 'UPLOAD_NEEDED', filename: assetFilename }).catch(() => {})
+            return
+          }
+          shortName = absolutePath.split(/[/\\]/).pop()
+
+          // ── Step 2: attach debugger + enable file chooser intercept ────────
+          // Re-resolve target in case the tab navigated during the download.
+          targetTabId = await _resolveTarget() ?? targetTabId
+          try {
+            const preAttach = await chrome.tabs.get(targetTabId).catch(() => null)
+            console.log('[FieldAgent] Attaching CDP to tab', targetTabId, 'url:', preAttach?.url)
+            await new Promise((resolve, reject) =>
+              chrome.debugger.attach({ tabId: targetTabId }, '1.3', () =>
+                chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()
+              )
+            )
+            await new Promise((resolve) =>
+              chrome.debugger.sendCommand({ tabId: targetTabId }, 'Page.setInterceptFileChooserDialog', { enabled: true }, resolve)
+            )
+          } catch (err) {
+            console.error('[FieldAgent] Debugger attach failed:', err)
+            chrome.runtime.sendMessage({ type: 'UPLOAD_NEEDED', filename: assetFilename }).catch(() => {})
+            return
+          }
+
+          // ── Step 3: persist intercept state so top-level handler can use it
+          await chrome.storage.local.set({ pendingFileChooser: { tabId: targetTabId, absolutePath } })
+
+          // ── Step 4: tell panel to prompt user ─────────────────────────────
+          chrome.runtime.sendMessage({ type: 'UPLOAD_READY', filename: shortName }).catch(() => {})
+
+          // Safety: detach after 90 s if user never clicks
+          setTimeout(async () => {
+            const { pendingFileChooser } = await chrome.storage.local.get('pendingFileChooser')
+            if (pendingFileChooser?.tabId === targetTabId) {
+              await chrome.storage.local.remove('pendingFileChooser')
+              await _detachDebugger(targetTabId)
+              chrome.runtime.sendMessage({ type: 'UPLOAD_NEEDED', filename: shortName }).catch(() => {})
+            }
+          }, 90_000)
+
+          return // channel already closed via sendResponse above
         }
 
         case 'ANSWER_QUESTION': {
