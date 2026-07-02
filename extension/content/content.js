@@ -199,6 +199,11 @@
         if (el) await applyFileAttach(el, ins, taskId).catch(console.warn)
       } else {
         applyInstruction(ins)
+        // After a click, pause so dropdowns/modals have time to open before
+        // the next instruction runs (board picker needs ~300 ms to animate open).
+        if (ins.action === 'click') {
+          await new Promise((r) => setTimeout(r, 350))
+        }
       }
     }
   }
@@ -264,6 +269,16 @@
       if (result?.instructions?.length) {
         await applyInstructions(result.instructions, task.task_id)
         watchForSubmit()
+        // After any non-paste instructions, schedule a follow-up inspect so
+        // multi-step UI flows (board section picker, tag confirmation, etc.)
+        // are caught in the next cycle rather than silently dropped.
+        const hasNonFile = result.instructions.some(
+          (i) => i.action !== 'paste_file' && i.action !== 'attach_file'
+        )
+        if (hasNonFile && !uploadJustCompleted) {
+          lastSnapshotUrl = null
+          scheduleInspect(1500)
+        }
       }
     } finally {
       inspectInProgress = false

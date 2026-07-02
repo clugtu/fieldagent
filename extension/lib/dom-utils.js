@@ -237,12 +237,15 @@ function applyTextFill(el, value) {
   // contenteditable divs (common in React rich-text editors like Pinterest's)
   // don't have a .value property — set textContent instead.
   if (el.isContentEditable) {
+    el.click()
     el.focus()
-    // execCommand routes through the browser's native editing pipeline, which
-    // React's synthetic event system intercepts correctly. Setting textContent
-    // directly bypasses React's internal state, leaving the placeholder visible
-    // and the field frozen.
-    document.execCommand('selectAll', false, null)
+    // Use the Selection API to select the element's content before insertText.
+    // execCommand('selectAll') can select outside the element in some browsers;
+    // selectNodeContents() is scoped to this element only.
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const sel = window.getSelection()
+    if (sel) { sel.removeAllRanges(); sel.addRange(range) }
     document.execCommand('insertText', false, value)
     return
   }
