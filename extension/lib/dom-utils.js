@@ -120,8 +120,15 @@ function extractSnapshot(platformHint) {
     const zone = candidate || input.parentElement
     if (!zone || seenZones.has(zone)) return
     seenZones.add(zone)
-    // has_preview: true means Pinterest already shows an upload thumbnail here
-    const has_preview = !!zone.querySelector('img[src], video[src]')
+    // has_preview: true means an upload thumbnail is showing.
+    // Check the zone itself AND its parent — Pinterest often places the preview
+    // image as a sibling of the file input rather than a direct descendant.
+    // Also check srcset: Pinterest uses responsive images without a bare src.
+    const _previewQ = 'img[src]:not([src=""]), img[srcset]:not([srcset=""]), video[src]:not([src=""])'
+    const has_preview = !!(
+      zone.querySelector(_previewQ) ||
+      zone.parentElement?.querySelector(_previewQ)
+    )
     upload_zones.push({
       tag: zone.tagName.toLowerCase(),
       id: zone.id || '',

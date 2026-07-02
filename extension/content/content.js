@@ -70,12 +70,6 @@
     const postHasPreview = post.upload_zones.some((z) => z.has_preview)
     if (!preHasPreview && postHasPreview) return true
     if (pre.upload_zones.length > 0 && post.upload_zones.length === 0) return true
-    // Pinterest may replace the upload zone with a preview container that has
-    // no file input — detect by checking for any visible media in the page body
-    // (img with src/srcset, or element with a background-image style).
-    const hadMedia = pre.upload_zones.length > 0
-    const hasMedia = !!document.querySelector('img[src]:not([src=""]), img[srcset], video[src], [style*="background-image"]')
-    if (hadMedia && hasMedia) return true
     return false
   }
 
