@@ -107,9 +107,46 @@ function hideUploadPrompt() {
   uploadSection.style.display = 'none'
 }
 
+// Accumulated history for the current task — cleared only when the task changes.
+let _instructionHistory = []
+
+function _insRow(ins) {
+  const action = ins.action || 'type'
+  const field = ins.fallback_hint || ins.selector_hint || '?'
+  const val = ins.value != null
+    ? (ins.value.length > 60 ? ins.value.slice(0, 60) + '…' : ins.value)
+    : (ins.asset_id ? `[file: ${ins.asset_id}]` : '')
+  return `<div class="instruction">
+    <span class="instruction-action" title="${action}">${action}</span>
+    <span class="instruction-field" title="${field}">${field}</span>
+    ${val ? `<span class="instruction-value" title="${ins.value || ''}">${val}</span>` : ''}
+  </div>`
+}
+
+function _rebuildHistory() {
+  if (!_instructionHistory.length) { instructionsSection.style.display = 'none'; return }
+  instructionsSection.style.display = ''
+  // Newest entry first
+  instructionsList.innerHTML = _instructionHistory.slice().reverse().map((entry, i, arr) => {
+    const num = arr.length - i
+    const rows = entry.instructions.map(_insRow).join('') || '<div class="instruction"><span class="instruction-field">(no instructions)</span></div>'
+    const notesHtml = entry.notes ? `<div class="notes">${entry.notes}</div>` : ''
+    return `<div class="history-entry">
+      <div class="history-ts">#${num} · ${entry.time}${entry.status ? ' · ' + entry.status : ''}</div>
+      ${rows}${notesHtml}
+    </div>`
+  }).join('')
+}
+
+function clearHistory() {
+  _instructionHistory = []
+  instructionsSection.style.display = 'none'
+  instructionsList.innerHTML = ''
+  agentNotes.style.display = 'none'
+}
+
 function renderInstructions(payload) {
   questionSection.style.display = 'none'
-  instructionsSection.style.display = 'none'
 
   if (!payload) return
 
@@ -123,28 +160,15 @@ function renderInstructions(payload) {
     return
   }
 
-  if (payload.instructions?.length) {
+  if (payload.instructions?.length || payload.notes) {
     console.log('[FieldAgent] instructions:', JSON.stringify(payload.instructions, null, 2))
-    instructionsSection.style.display = ''
-    instructionsList.innerHTML = payload.instructions.map((ins) => {
-      const action = ins.action || 'type'
-      const field = ins.fallback_hint || ins.selector_hint || '?'
-      const val = ins.value != null
-        ? (ins.value.length > 60 ? ins.value.slice(0, 60) + '…' : ins.value)
-        : (ins.asset_id ? `[file: ${ins.asset_id}]` : '')
-      return `<div class="instruction">
-        <span class="instruction-action" title="${action}">${action}</span>
-        <span class="instruction-field" title="${ins.fallback_hint}">${field}</span>
-        ${val ? `<span class="instruction-value" title="${ins.value}">${val}</span>` : ''}
-      </div>`
-    }).join('')
-  }
-
-  if (payload.notes) {
-    agentNotes.textContent = payload.notes
-    agentNotes.style.display = ''
-  } else {
-    agentNotes.style.display = 'none'
+    _instructionHistory.push({
+      time: new Date().toLocaleTimeString(),
+      status: payload.status,
+      instructions: payload.instructions || [],
+      notes: payload.notes || '',
+    })
+    _rebuildHistory()
   }
 }
 
@@ -176,9 +200,12 @@ checkConfig().then((configured) => {
 // which can be missed if the panel isn't open when the alarm fires.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && 'activeTask' in changes) {
-    renderTask(changes.activeTask.newValue || null)
-    if (!changes.activeTask.newValue) {
-      renderInstructions(null)
+    const prev = changes.activeTask.oldValue
+    const next = changes.activeTask.newValue
+    renderTask(next || null)
+    // Clear history only when the task itself changes (different task_id or task gone)
+    if (!next || (prev && prev.task_id !== next.task_id)) {
+      clearHistory()
     }
   }
   if (area === 'sync' && (changes.serviceUrl || changes.apiKey)) {
@@ -200,7 +227,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'UPLOAD_NEEDED') showUploadFallback(message.filename)
   if (message.type === 'TASK_DONE') {
     renderTask(null)
-    renderInstructions(null)
+    clearHistory()
     hideUploadPrompt()
   }
 })
@@ -225,6 +252,6 @@ btnComplete.addEventListener('click', async () => {
 btnClear.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'CLEAR_TASK' }, () => {
     renderTask(null)
-    renderInstructions(null)
+    clearHistory()
   })
 })
