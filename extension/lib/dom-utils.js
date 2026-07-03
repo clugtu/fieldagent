@@ -262,7 +262,7 @@ function resolveElement(instruction) {
     // Target a drop zone / upload container, not a file input
     tag = '[role="presentation"], [data-testid*="upload"], [class*="upload"], [class*="Upload"], [class*="drop"], [class*="Drop"]'
   } else if (action === 'click') {
-    tag = 'button, [role="button"], [role="combobox"], [aria-haspopup], a, input:not([type=hidden]), textarea, [contenteditable]'
+    tag = 'button, [role="button"], [role="combobox"], [aria-haspopup], a, input:not([type=hidden]), textarea, [contenteditable], [role="option"], [role="menuitem"], [role="listitem"]'
   } else {
     tag = 'input:not([type=hidden]), textarea, [contenteditable]'
   }

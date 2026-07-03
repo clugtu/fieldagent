@@ -342,30 +342,29 @@
         // inspect pass.
         let el = window.FieldAgentUtils.resolveElement(ins)
         if (!el) el = await waitForTarget(ins, 2000)
+        const hint = ins.fallback_hint || ''
         if (el) {
           console.log(`[FieldAgent] click: found el tag=${el.tagName} aria="${el.getAttribute('aria-label') || ''}" txt="${(el.textContent?.trim() || '').slice(0, 40)}"`)
           el.click()
-          // After clicking a chevron/section trigger, wait briefly and log what
-          // appeared in the section picker so we can verify the click worked.
-          const hint = ins.fallback_hint || ''
-          if (hint === '>' || hint.includes('chevron')) {
-            await new Promise((r) => setTimeout(r, 800))
-            const sectionItems = Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="menuitem"]'))
-              .filter((e) => !e.closest('[aria-hidden="true"]'))
-              .map((e) => `txt="${(e.textContent?.trim() || '').slice(0, 30)}" role="${e.getAttribute('role')}"`)
-            console.log(`[FieldAgent] click: after '>' — visible options: [${sectionItems.slice(0, 15).join(', ')}]`)
-          }
         } else {
           // Log what was available so we can diagnose the missing selector.
           const sel = ins.selector_hint || ''
-          const hint = ins.fallback_hint || ''
-          const available = Array.from(document.querySelectorAll('button, [role="button"], [role="option"]'))
+          const available = Array.from(document.querySelectorAll('button, [role="button"], [role="option"], [role="menuitem"], [role="listitem"]'))
             .map((b) => `<${b.tagName.toLowerCase()} aria-label="${b.getAttribute('aria-label') || ''}" text="${(b.textContent?.trim() || '').slice(0, 40)}">`)
             .slice(0, 20)
           console.warn(
             `[FieldAgent] click: element not found | selector="${sel}" fallback="${hint}"\n`,
             'Available buttons/options:', available,
           )
+        }
+        // After any chevron/section click attempt (found or not), log visible
+        // section candidates — sections appear here whether or not we clicked ">".
+        if (hint === '>' || hint.includes('chevron')) {
+          await new Promise((r) => setTimeout(r, 800))
+          const sectionItems = Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="menuitem"], li'))
+            .filter((e) => !e.closest('[aria-hidden="true"]'))
+            .map((e) => `txt="${(e.textContent?.trim() || '').slice(0, 30)}" role="${e.getAttribute('role')}" tag="${e.tagName}"`)
+          console.log(`[FieldAgent] click: after '>' — section candidates: [${sectionItems.slice(0, 15).join(', ')}]`)
         }
       } else if (ins.action === 'attach_file') {
         const el = window.FieldAgentUtils.resolveElement(ins)
