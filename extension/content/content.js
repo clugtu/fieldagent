@@ -167,15 +167,23 @@
   // fixed sleeps because it fires the moment the element actually appears.
 
   function waitForElement(selector, maxWait = 3000) {
+    // Like document.querySelector but skips elements inside aria-hidden containers
+    // (inactive Pinterest draft panels, hidden sidebars) so we find the visible one.
+    function findVisible() {
+      for (const el of document.querySelectorAll(selector)) {
+        if (!el.closest('[aria-hidden="true"]')) return el
+      }
+      return null
+    }
     return new Promise((resolve) => {
-      const existing = document.querySelector(selector)
+      const existing = findVisible()
       if (existing) { resolve(existing); return }
       const obs = new MutationObserver(() => {
-        const el = document.querySelector(selector)
+        const el = findVisible()
         if (el) { obs.disconnect(); resolve(el) }
       })
       obs.observe(document.body, { childList: true, subtree: true })
-      setTimeout(() => { obs.disconnect(); resolve(null) }, maxWait)
+      setTimeout(() => { obs.disconnect(); resolve(findVisible()) }, maxWait)
     })
   }
 
@@ -290,6 +298,7 @@
           // Pause for the picker to settle (e.g. section chevron to appear).
           await new Promise((r) => setTimeout(r, 600))
           const postPickButtons = Array.from(document.querySelectorAll('[role="option"] button, [role="listbox"] button'))
+            .filter((b) => !b.closest('[aria-hidden="true"]'))
             .map((b) => `aria="${b.getAttribute('aria-label') || ''}" txt="${(b.textContent?.trim() || '').slice(0, 20)}"`)
           console.log(`[FieldAgent] pick: post-click buttons in picker: [${postPickButtons.join(', ')}]`)
         }
