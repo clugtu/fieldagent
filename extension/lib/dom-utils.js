@@ -276,8 +276,9 @@ function resolveElement(instruction) {
       el.getAttribute('aria-label'),
       el.textContent?.trim().slice(0, 80),
       nearestLabel(el),
-      el.name,
-      el.id,
+      // Intentionally omit el.id and el.name — internal DOM identifiers (e.g.
+      // "storyboard-selector-title") contain substrings like "board" that
+      // spuriously match unrelated hints and shadow the real target.
     ]
       .join(' ')
       .toLowerCase()

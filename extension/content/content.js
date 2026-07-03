@@ -189,16 +189,18 @@
 
   // Wait until resolveElement can find the instruction's target.
   // Used after a click opens a dropdown whose contents aren't in the DOM yet.
+  // Preserves the original action so action-specific guards (e.g. the
+  // isContentEditable skip for click actions) remain in effect while waiting.
   function waitForTarget(ins, maxWait = 1500) {
     return new Promise((resolve) => {
-      const existing = window.FieldAgentUtils.resolveElement({ ...ins, action: 'type' })
+      const existing = window.FieldAgentUtils.resolveElement(ins)
       if (existing) { resolve(existing); return }
       const obs = new MutationObserver(() => {
-        const el = window.FieldAgentUtils.resolveElement({ ...ins, action: 'type' })
+        const el = window.FieldAgentUtils.resolveElement(ins)
         if (el) { obs.disconnect(); resolve(el) }
       })
       obs.observe(document.body, { childList: true, subtree: true })
-      setTimeout(() => { obs.disconnect(); resolve(null) }, maxWait)
+      setTimeout(() => { obs.disconnect(); resolve(window.FieldAgentUtils.resolveElement(ins)) }, maxWait)
     })
   }
 
