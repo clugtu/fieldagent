@@ -283,8 +283,11 @@ function resolveElement(instruction) {
         el.textContent?.trim().toLowerCase() === hint ||
         el.getAttribute('aria-label')?.toLowerCase() === hint
       ) return el
-    } else if (hint.split(' ').some((word) => word.length > 3 && elText.includes(word))) {
-      return el
+    } else {
+      // All words longer than 3 chars must appear — prevents "Search for a board"
+      // matching the tag input (which has "search" but not "board").
+      const keyWords = hint.split(' ').filter((w) => w.length > 3)
+      if (keyWords.length > 0 && keyWords.every((w) => elText.includes(w))) return el
     }
   }
 
