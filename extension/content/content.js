@@ -304,6 +304,16 @@
         if (el) {
           console.log(`[FieldAgent] click: found el tag=${el.tagName} aria="${el.getAttribute('aria-label') || ''}" txt="${(el.textContent?.trim() || '').slice(0, 40)}"`)
           el.click()
+          // After clicking a chevron/section trigger, wait briefly and log what
+          // appeared in the section picker so we can verify the click worked.
+          const hint = ins.fallback_hint || ''
+          if (hint === '>' || hint.includes('chevron')) {
+            await new Promise((r) => setTimeout(r, 800))
+            const sectionItems = Array.from(document.querySelectorAll('[role="option"], [role="listitem"], [role="menuitem"]'))
+              .filter((e) => !e.closest('[aria-hidden="true"]'))
+              .map((e) => `txt="${(e.textContent?.trim() || '').slice(0, 30)}" role="${e.getAttribute('role')}"`)
+            console.log(`[FieldAgent] click: after '>' — visible options: [${sectionItems.slice(0, 15).join(', ')}]`)
+          }
         } else {
           // Log what was available so we can diagnose the missing selector.
           const sel = ins.selector_hint || ''
