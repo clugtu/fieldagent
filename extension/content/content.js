@@ -212,6 +212,7 @@
     applyingInstructions = true
     try {
     for (const ins of instructions) {
+      console.log(`[FieldAgent] exec: ${ins.action} | sel="${ins.selector_hint || ''}" hint="${ins.fallback_hint || ''}" val=${JSON.stringify(ins.value || '')}`)
       if (ins.action === 'paste_file') {
         if (lastUploadTaskId === taskId) {
           // LLM re-issued paste_file without seeing the completed state.
@@ -278,6 +279,7 @@
           // and [aria-selected] cover other platforms / edge cases.
           const option = await waitForElement('[role="option"], [role="menuitem"], [aria-selected="false"]', 3000)
           if (option) {
+            console.log(`[FieldAgent] pick: clicking option text="${(option.textContent?.trim() || '').slice(0, 60)}"`)
             option.click()
           } else {
             // Keyboard fallback: Down to highlight the first item, Enter to confirm.
@@ -285,8 +287,11 @@
             await new Promise((r) => setTimeout(r, 80))
             el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
           }
-          // Minimal pause for chip/option DOM to settle before the next pick.
-          await new Promise((r) => setTimeout(r, 150))
+          // Pause for the picker to settle (e.g. section chevron to appear).
+          await new Promise((r) => setTimeout(r, 600))
+          const postPickButtons = Array.from(document.querySelectorAll('[role="option"] button, [role="listbox"] button'))
+            .map((b) => `aria="${b.getAttribute('aria-label') || ''}" txt="${(b.textContent?.trim() || '').slice(0, 20)}"`)
+          console.log(`[FieldAgent] pick: post-click buttons in picker: [${postPickButtons.join(', ')}]`)
         }
       } else if (ins.action === 'click') {
         // Try immediately; if the element isn't in the DOM yet (e.g. a section
@@ -297,6 +302,7 @@
         let el = window.FieldAgentUtils.resolveElement(ins)
         if (!el) el = await waitForTarget(ins, 2000)
         if (el) {
+          console.log(`[FieldAgent] click: found el tag=${el.tagName} aria="${el.getAttribute('aria-label') || ''}" txt="${(el.textContent?.trim() || '').slice(0, 40)}"`)
           el.click()
         } else {
           // Log what was available so we can diagnose the missing selector.
