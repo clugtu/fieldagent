@@ -287,11 +287,21 @@
         if (el) {
           const valueLC = (ins.value || '').toLowerCase()
 
-          // Find the first visible option whose text contains the target value.
+          // Find the first visible option whose text starts with the target value.
+          // startsWith rather than includes: avoids matching "BoardMiniatures" or
+          // "Werewolf Miniatures" when searching for "Miniatures".
+          // Also includes [role="button"] because Pinterest renders board-picker
+          // results as role="button" divs, not role="option".
           function findMatchingOption() {
-            for (const candidate of document.querySelectorAll('[role="option"], [role="menuitem"]')) {
-              if (candidate.closest('[aria-hidden="true"]')) continue
-              if ((candidate.textContent?.trim() || '').toLowerCase().includes(valueLC)) return candidate
+            const pool = Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], [role="button"]'))
+              .filter((c) => !c.closest('[aria-hidden="true"]'))
+            console.log(
+              `[FieldAgent] pick: findMatchingOption pool=${pool.length} for "${valueLC}":`,
+              pool.slice(0, 8).map((c) => `${c.tagName}[${c.getAttribute('role')||''}] "${(c.textContent?.trim()||'').slice(0,30)}"`)
+            )
+            for (const candidate of pool) {
+              const txt = (candidate.textContent?.trim() || '').toLowerCase()
+              if (txt.startsWith(valueLC)) return candidate
             }
             return null
           }
