@@ -266,6 +266,11 @@ function resolveElement(instruction) {
 
   const candidates = document.querySelectorAll(tag)
   for (const el of candidates) {
+    // Skip elements inside aria-hidden containers (inactive draft panels, sidebars).
+    // Pinterest hides non-active draft panes with aria-hidden="true"; clicking them
+    // has no effect, and they can shadow the correct element in the active editor.
+    if (typeof el.closest === 'function' && el.closest('[aria-hidden="true"]')) continue
+
     const elText = [
       el.placeholder,
       el.getAttribute('aria-label'),
@@ -286,6 +291,9 @@ function resolveElement(instruction) {
     } else {
       // All words longer than 3 chars must appear — prevents "Search for a board"
       // matching the tag input (which has "search" but not "board").
+      // For click actions, skip contenteditable rich-text editors — their body text
+      // can spuriously match section/tag names (e.g. description containing "Cthulhu").
+      if (action === 'click' && el.isContentEditable) continue
       const keyWords = hint.split(' ').filter((w) => w.length > 3)
       if (keyWords.length > 0 && keyWords.every((w) => elText.includes(w))) return el
     }
