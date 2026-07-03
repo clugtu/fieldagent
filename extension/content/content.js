@@ -296,16 +296,28 @@
             return null
           }
 
-          // Wait (event-driven, max 800ms) for the picker's default list to appear,
-          // then check if the target board is already visible without typing.
-          await waitForElement('[role="option"], [role="menuitem"]', 800)
-          let option = findMatchingOption()
+          // Wait (event-driven, max 800ms) for a MATCHING option to appear in
+          // the picker's default list. Using waitForElement (any option) resolved
+          // too early on stale hidden elements; we want the matching one specifically.
+          function waitForMatchingOption(maxWait) {
+            return new Promise((resolve) => {
+              const existing = findMatchingOption()
+              if (existing) { resolve(existing); return }
+              const obs = new MutationObserver(() => {
+                const found = findMatchingOption()
+                if (found) { obs.disconnect(); clearTimeout(timer); resolve(found) }
+              })
+              obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'aria-hidden'] })
+              const timer = setTimeout(() => { obs.disconnect(); resolve(null) }, maxWait)
+            })
+          }
+
+          let option = await waitForMatchingOption(800)
 
           if (!option) {
             // Default list didn't have a match; type to trigger autocomplete.
             window.FieldAgentUtils.applyTextFill(el, ins.value)
-            await waitForElement('[role="option"], [role="menuitem"]', 3000)
-            option = findMatchingOption()
+            option = await waitForMatchingOption(3000)
           }
 
           if (option) {
