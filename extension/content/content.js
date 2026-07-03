@@ -285,12 +285,6 @@
         // dropdown), waitForTarget waits until a DOM mutation makes it findable.
         const el = await waitForTarget(ins, 1500)
         if (el) {
-          // Allow the picker/dropdown to fully open before interacting.
-          // Pinterest's board picker shows a default list immediately — waiting
-          // lets it render so we can click directly without relying on typed
-          // autocomplete, which may not trigger from synthetic input events.
-          await new Promise((r) => setTimeout(r, 800))
-
           const valueLC = (ins.value || '').toLowerCase()
 
           // Find the first visible option whose text contains the target value.
@@ -302,7 +296,9 @@
             return null
           }
 
-          // Prefer the default list — avoids relying on synthetic-event autocomplete.
+          // Wait (event-driven, max 800ms) for the picker's default list to appear,
+          // then check if the target board is already visible without typing.
+          await waitForElement('[role="option"], [role="menuitem"]', 800)
           let option = findMatchingOption()
 
           if (!option) {
