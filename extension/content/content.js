@@ -285,13 +285,38 @@
         // dropdown), waitForTarget waits until a DOM mutation makes it findable.
         const el = await waitForTarget(ins, 1500)
         if (el) {
-          window.FieldAgentUtils.applyTextFill(el, ins.value)
-          // Event-driven: resolves the moment an option appears. Pinterest's board
-          // picker uses [role="option"] inside a [role="listbox"]; [role="menuitem"]
-          // and [aria-selected] cover other platforms / edge cases.
-          const option = await waitForElement('[role="option"], [role="menuitem"], [aria-selected="false"]', 3000)
+          // Allow the picker/dropdown to fully open before interacting.
+          // Pinterest's board picker shows a default list immediately — waiting
+          // lets it render so we can click directly without relying on typed
+          // autocomplete, which may not trigger from synthetic input events.
+          await new Promise((r) => setTimeout(r, 800))
+
+          const valueLC = (ins.value || '').toLowerCase()
+
+          // Find the first visible option whose text contains the target value.
+          function findMatchingOption() {
+            for (const candidate of document.querySelectorAll('[role="option"], [role="menuitem"]')) {
+              if (candidate.closest('[aria-hidden="true"]')) continue
+              if ((candidate.textContent?.trim() || '').toLowerCase().includes(valueLC)) return candidate
+            }
+            return null
+          }
+
+          // Prefer the default list — avoids relying on synthetic-event autocomplete.
+          let option = findMatchingOption()
+
+          if (!option) {
+            // Default list didn't have a match; type to trigger autocomplete.
+            window.FieldAgentUtils.applyTextFill(el, ins.value)
+            await waitForElement('[role="option"], [role="menuitem"]', 3000)
+            option = findMatchingOption()
+          }
+
           if (option) {
             console.log(`[FieldAgent] pick: clicking option text="${(option.textContent?.trim() || '').slice(0, 60)}"`)
+            // Full pointer sequence — some React handlers listen on mousedown, not click.
+            option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+            option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
             option.click()
           } else {
             // Keyboard fallback: Down to highlight the first item, Enter to confirm.
@@ -299,9 +324,12 @@
             await new Promise((r) => setTimeout(r, 80))
             el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
           }
-          // Pause for the picker to settle (e.g. section chevron to appear).
-          await new Promise((r) => setTimeout(r, 600))
-          const postPickButtons = Array.from(document.querySelectorAll('[role="option"] button, [role="listbox"] button'))
+          // Longer settle wait: picker needs time to dismiss autocomplete and show
+          // the selected board row (which may contain the section chevron).
+          await new Promise((r) => setTimeout(r, 1000))
+          const postPickButtons = Array.from(document.querySelectorAll(
+            '[role="option"] button, [role="option"] [role="button"], [role="listbox"] button, [role="listbox"] [role="button"]'
+          ))
             .filter((b) => !b.closest('[aria-hidden="true"]'))
             .map((b) => `aria="${b.getAttribute('aria-label') || ''}" txt="${(b.textContent?.trim() || '').slice(0, 20)}"`)
           console.log(`[FieldAgent] pick: post-click buttons in picker: [${postPickButtons.join(', ')}]`)
