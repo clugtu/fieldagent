@@ -244,8 +244,11 @@ function extractSnapshot(platformHint) {
 function resolveElement(instruction) {
   if (instruction.selector_hint) {
     try {
-      const el = document.querySelector(instruction.selector_hint)
-      if (el) return el
+      for (const el of document.querySelectorAll(instruction.selector_hint)) {
+        if (typeof el.closest === 'function' && el.closest('[aria-hidden="true"]')) continue
+        if (instruction.action !== 'paste_file' && el.offsetParent === null) continue
+        return el
+      }
     } catch { /* invalid selector */ }
   }
 
@@ -270,6 +273,9 @@ function resolveElement(instruction) {
     // Pinterest hides non-active draft panes with aria-hidden="true"; clicking them
     // has no effect, and they can shadow the correct element in the active editor.
     if (typeof el.closest === 'function' && el.closest('[aria-hidden="true"]')) continue
+    // Skip elements in display:none subtrees — they aren't interactive.
+    // paste_file drop zones may be hidden until a drag event activates them.
+    if (action !== 'paste_file' && el.offsetParent === null) continue
 
     const elText = [
       el.placeholder,

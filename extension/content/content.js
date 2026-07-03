@@ -199,7 +199,9 @@
         const el = window.FieldAgentUtils.resolveElement(ins)
         if (el) { obs.disconnect(); resolve(el) }
       })
-      obs.observe(document.body, { childList: true, subtree: true })
+      // Include attribute changes: Pinterest toggles visibility via class/style
+      // rather than add/remove elements, so childList alone misses the transition.
+      obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden', 'aria-hidden'] })
       setTimeout(() => { obs.disconnect(); resolve(window.FieldAgentUtils.resolveElement(ins)) }, maxWait)
     })
   }
