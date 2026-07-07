@@ -239,6 +239,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 })
 
+
 btnReinspect.addEventListener('click', async () => {
   hideUploadPrompt()
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })

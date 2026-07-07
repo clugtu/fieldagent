@@ -218,12 +218,222 @@
     scheduleInspect(1200)
   }, true) // capture phase — sees events before React
 
+  // ─── React fiber click helper ────────────────────────────────────────────────
+  // Pinterest's custom pickers (board results, section items) use React event
+  // handlers that check event.isTrusted and silently ignore all synthetic DOM
+  // events. Calling the fiber's handler function directly with isTrusted: true
+  // bypasses both the browser event system and the isTrusted guard.
+  // Returns true if a handler was found and called, false if nothing was found.
+
+  function reactFiberClick(el) {
+    try {
+      const fk = Object.keys(el).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'))
+      if (!fk) return false
+      const rect = el.getBoundingClientRect()
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2
+      for (let f = el[fk]; f; f = f.return) {
+        const p = f.memoizedProps
+        if (!p) continue
+        const h = p.onClick || p.onMouseDown || p.onPointerDown
+        if (!h) continue
+        const evType = p.onClick ? 'click' : p.onMouseDown ? 'mousedown' : 'pointerdown'
+        const currentTarget = (f.stateNode instanceof Element) ? f.stateNode : el
+        console.log(`[FieldAgent] reactFiberClick: firing ${evType} on stateNode=${currentTarget.tagName || 'component'}`)
+        h({
+          type: evType, isTrusted: true, bubbles: true, cancelable: true,
+          target: el, currentTarget,
+          button: 0, buttons: 1, which: 1,
+          clientX: cx, clientY: cy, pageX: cx, pageY: cy,
+          screenX: cx, screenY: cy, detail: 1,
+          shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+          preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {},
+          isPropagationStopped() { return false }, isDefaultPrevented() { return false },
+          persist() {},
+          nativeEvent: {
+            type: evType, isTrusted: true, target: el, button: 0,
+            clientX: cx, clientY: cy, preventDefault() {}, stopPropagation() {},
+          },
+        })
+        return true
+      }
+    } catch (e) { console.warn('[FieldAgent] reactFiberClick error', e) }
+    return false
+  }
+
+  // Fire a keyboard event via the element's React onKeyDown handler with
+  // isTrusted: true. Pinterest's board picker keyboard navigation rejects
+  // synthetic DOM KeyboardEvents (isTrusted=false) but accepts handler calls.
+  function reactFiberKeyDown(el, key, keyCode) {
+    try {
+      const fk = Object.keys(el).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'))
+      if (!fk) return false
+      for (let f = el[fk]; f; f = f.return) {
+        const p = f.memoizedProps
+        if (!p?.onKeyDown) continue
+        const currentTarget = (f.stateNode instanceof Element) ? f.stateNode : el
+        const codeMap = { ArrowDown: 'ArrowDown', Enter: 'Enter' }
+        p.onKeyDown({
+          type: 'keydown', isTrusted: true, bubbles: true, cancelable: true,
+          key, keyCode, which: keyCode, code: codeMap[key] || key,
+          target: el, currentTarget,
+          shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+          repeat: false, isComposing: false,
+          preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {},
+          isPropagationStopped() { return false }, isDefaultPrevented() { return false },
+          persist() {},
+          nativeEvent: {
+            type: 'keydown', isTrusted: true, key, keyCode, which: keyCode,
+            target: el, preventDefault() {}, stopPropagation() {},
+          },
+        })
+        console.log(`[FieldAgent] reactFiberKeyDown: fired ${key} on stateNode=${currentTarget.tagName || 'component'}`)
+        return true
+      }
+    } catch (e) { console.warn('[FieldAgent] reactFiberKeyDown error', e) }
+    return false
+  }
+
+  // Ask the service worker to dispatch a truly trusted CDP mouse click at the
+  // centre of el. Returns a promise that resolves true on success, false on failure.
+  // Required for elements whose click handlers use document-level native listeners
+  // that check event.isTrusted (e.g. Pinterest's board autocomplete results).
+  function cdpClick(el) {
+    const rect = el.getBoundingClientRect()
+    // Local (iframe-relative) centre of the element — used for elementFromPoint
+    // diagnostic and for the el-level event listeners below.
+    const localX = Math.round(rect.left + rect.width / 2)
+    const localY = Math.round(rect.top + rect.height / 2)
+
+    // CDP Input.dispatchMouseEvent uses TOP-LEVEL viewport coordinates, but
+    // getBoundingClientRect() in an iframe returns iframe-local coordinates.
+    // Walk window.frameElement up the same-origin frame chain and accumulate
+    // each iframe's offset so CDP fires at the correct screen position.
+    let x = localX, y = localY
+    const inIframe = window !== window.top
+    if (inIframe) {
+      try {
+        let win = window
+        while (win !== win.top) {
+          const fe = win.frameElement   // null if cross-origin
+          if (!fe) break
+          const fr = fe.getBoundingClientRect()
+          x += fr.left
+          y += fr.top
+          win = win.parent
+        }
+      } catch (_) {}
+      x = Math.round(x)
+      y = Math.round(y)
+    }
+
+    const atPoint = document.elementFromPoint(localX, localY)
+    const atText = (atPoint?.textContent?.trim() || '').slice(0, 30)
+    console.log(`[FieldAgent] cdpClick: el="${(el.textContent?.trim() || '').slice(0,30)}" inIframe=${inIframe} local=(${localX},${localY}) cdp=(${x},${y}) elementFromPoint="${atText}"`)
+
+    // Document-level capture listeners see ALL events before any element handler.
+    // Element-level listeners fire even if the event doesn't propagate to document
+    // (e.g. closed shadow DOM, top-layer dialog, cross-frame delivery mismatch).
+    // Comparing which fires tells us WHERE the CDP events actually land.
+    const logDoc = (e) => {
+      console.log(`[FieldAgent] cdpClick: DOC-${e.type} isTrusted=${e.isTrusted} target=${e.target?.tagName}[${e.target?.getAttribute?.('role')||''}] txt="${(e.target?.textContent?.trim()||'').slice(0,25)}"`)
+    }
+    const logEl = (e) => {
+      console.log(`[FieldAgent] cdpClick: EL-${e.type} isTrusted=${e.isTrusted}`)
+    }
+    document.addEventListener('mousedown',  logDoc, { capture: true, once: true })
+    document.addEventListener('mouseup',    logDoc, { capture: true, once: true })
+    document.addEventListener('click',      logDoc, { capture: true, once: true })
+    document.addEventListener('pointerdown',logDoc, { capture: true, once: true })
+    document.addEventListener('pointerup',  logDoc, { capture: true, once: true })
+    el.addEventListener('mousedown',  logEl, { once: true })
+    el.addEventListener('mouseup',    logEl, { once: true })
+    el.addEventListener('click',      logEl, { once: true })
+    el.addEventListener('pointerdown',logEl, { once: true })
+    el.addEventListener('pointerup',  logEl, { once: true })
+
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'CDP_CLICK', x, y }, (r) => {
+        document.removeEventListener('mousedown',  logDoc, { capture: true })
+        document.removeEventListener('mouseup',    logDoc, { capture: true })
+        document.removeEventListener('click',      logDoc, { capture: true })
+        document.removeEventListener('pointerdown',logDoc, { capture: true })
+        document.removeEventListener('pointerup',  logDoc, { capture: true })
+        el.removeEventListener('mousedown',  logEl)
+        el.removeEventListener('mouseup',    logEl)
+        el.removeEventListener('click',      logEl)
+        el.removeEventListener('pointerdown',logEl)
+        el.removeEventListener('pointerup',  logEl)
+        if (chrome.runtime.lastError) {
+          console.warn('[FieldAgent] cdpClick: runtime error —', chrome.runtime.lastError.message)
+          resolve(false)
+        } else if (r?.ok) {
+          // topFrameEl tells us what the top-level frame sees at (x,y) via
+          // Runtime.evaluate — if it's 'IFRAME:…' the form is in a child frame
+          // and our content-script coordinates are iframe-relative, not top-level.
+          console.log(`[FieldAgent] cdpClick: succeeded topFrameEl=${r.topFrameEl}`)
+          resolve(true)
+        } else {
+          console.warn('[FieldAgent] cdpClick: failed —', r?.error)
+          resolve(false)
+        }
+      })
+    })
+  }
+
+  // Ask the SW to fire trusted CDP keyboard events at the currently focused element.
+  // Used for board-picker listitem selection: ArrowDown highlights the first autocomplete
+  // item, Enter selects it — without moving focus away from the search input (unlike
+  // mousePressed which triggers blur → autocomplete closes before click fires).
+  function cdpKeys(keys) {
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: 'CDP_KEYS', keys }, r => {
+        if (chrome.runtime.lastError) { resolve(false); return }
+        if (r?.ok) { console.log('[FieldAgent] cdpKeys: ok', keys); resolve(true) }
+        else { console.warn('[FieldAgent] cdpKeys: failed —', r?.error); resolve(false) }
+      })
+    })
+  }
+
   // ─── Apply instructions ─────────────────────────────────────────────────────
 
   async function applyInstructions(instructions, taskId) {
     applyingInstructions = true
+    // Inject the isTrusted-bypass patch into the page's MAIN world before any
+    // instruction runs. The scripting API bypasses Pinterest's CSP. The patch
+    // wraps addEventListener so synthetic mousedown/pointerdown/keydown events
+    // appear trusted to handlers registered AFTER this call — which includes
+    // Pinterest's board-picker mousedown listener (registered when the picker opens).
+    // The world:MAIN document_start content script covers handlers registered at
+    // page load; this covers the board picker's dynamic registration.
+    if (platform === 'pinterest') {
+      await new Promise(resolve =>
+        chrome.runtime.sendMessage({ type: 'INJECT_MAIN_PATCH' }, r => {
+          if (chrome.runtime.lastError) {
+            console.warn('[FieldAgent] INJECT_MAIN_PATCH:', chrome.runtime.lastError.message)
+          } else {
+            console.log('[FieldAgent] INJECT_MAIN_PATCH:', r?.ok ? 'ok' : ('failed — ' + r?.error))
+          }
+          resolve()
+        })
+      )
+    }
+    // Pre-attach the CDP debugger now, before any board-picker interactions.
+    // Attaching causes the focused input to blur (dismissing the autocomplete),
+    // so we attach early while nothing sensitive is open, then reuse the session
+    // for CDP_CLICK calls without re-attaching mid-interaction.
+    // Send window.location.href so the SW can do an exact-URL tab search as a
+    // reliable fallback when sender.tab.id is missing or points to a non-web tab.
+    const cdpReady = await new Promise(resolve =>
+      chrome.runtime.sendMessage({ type: 'CDP_ATTACH', pageUrl: window.location.href }, r => {
+        if (chrome.runtime.lastError) { resolve(false); return }
+        if (!r?.ok) console.warn('[FieldAgent] CDP_ATTACH failed:', r?.error)
+        resolve(r?.ok ?? false)
+      })
+    )
+    console.log('[FieldAgent] applyInstructions: CDP pre-attach =', cdpReady)
     try {
-    for (const ins of instructions) {
+    for (let _insIdx = 0; _insIdx < instructions.length; _insIdx++) {
+      const ins = instructions[_insIdx]
       console.log(`[FieldAgent] exec: ${ins.action} | sel="${ins.selector_hint || ''}" hint="${ins.fallback_hint || ''}" val=${JSON.stringify(ins.value || '')}`)
       if (ins.action === 'paste_file') {
         if (lastUploadTaskId === taskId) {
@@ -280,77 +490,346 @@
         }, 3_000)
         break
       } else if (ins.action === 'pick') {
-        // Type text into a field, wait for autocomplete, click first option.
-        // If the target isn't in the DOM yet (e.g. board search inside a just-opened
-        // dropdown), waitForTarget waits until a DOM mutation makes it findable.
-        const el = await waitForTarget(ins, 1500)
-        if (el) {
-          const valueLC = (ins.value || '').toLowerCase()
-
-          // Find the first visible option whose text starts with the target value.
-          // startsWith rather than includes: avoids matching "BoardMiniatures" or
-          // "Werewolf Miniatures" when searching for "Miniatures".
-          // Also includes [role="button"] because Pinterest renders board-picker
-          // results as role="button" divs, not role="option".
-          function findMatchingOption() {
-            const pool = Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], [role="button"]'))
-              .filter((c) => !c.closest('[aria-hidden="true"]'))
-            console.log(
-              `[FieldAgent] pick: findMatchingOption pool=${pool.length} for "${valueLC}":`,
-              pool.slice(0, 8).map((c) => `${c.tagName}[${c.getAttribute('role')||''}] "${(c.textContent?.trim()||'').slice(0,30)}"`)
-            )
-            for (const candidate of pool) {
-              const txt = (candidate.textContent?.trim() || '').toLowerCase()
-              if (txt.startsWith(valueLC)) return candidate
-            }
-            return null
+        // Type text into a field and React-click the first autocomplete result
+        // whose text starts with the target value. React fiber click bypasses
+        // isTrusted guards that block synthetic DOM events on custom pickers.
+        let el = await waitForTarget(ins, 1500)
+        // Always prefer the board-picker search input when it's visible in the DOM.
+        // The LLM can accidentally resolve the tag search (#combobox-storyboard-interest-tags)
+        // instead of the board search — override silently whenever the board picker is open.
+        // Tags input is explicitly excluded so it can never be returned as the board input.
+        const BOARD_EXCLUDED_IDS = new Set([
+          'storyboard-selector-title',
+          'WebsiteField',
+          'combobox-storyboard-interest-tags',
+        ])
+        const BOARD_SELECTORS = [
+          '[aria-label="Search through your boards"]',
+          '[aria-label="Search for a board"]',
+          '[placeholder="Search for a board"]',
+          '[placeholder="Find a board"]',
+          // Pinterest sometimes uses a bare "Search" placeholder for the board picker.
+          // The tags input uses "Search for a tag" so this won't match it.
+          '[placeholder="Search"]:not(#combobox-storyboard-interest-tags)',
+        ]
+        const findBoardInput = () => {
+          for (const sel of BOARD_SELECTORS) {
+            const inp = document.querySelector(sel)
+            if (inp && !BOARD_EXCLUDED_IDS.has(inp.id) &&
+                !inp.closest('[aria-hidden="true"]') && inp.offsetParent !== null) return inp
           }
-
-          // Wait (event-driven, max 800ms) for a MATCHING option to appear in
-          // the picker's default list. Using waitForElement (any option) resolved
-          // too early on stale hidden elements; we want the matching one specifically.
-          function waitForMatchingOption(maxWait) {
-            return new Promise((resolve) => {
-              const existing = findMatchingOption()
-              if (existing) { resolve(existing); return }
-              const obs = new MutationObserver(() => {
-                const found = findMatchingOption()
-                if (found) { obs.disconnect(); clearTimeout(timer); resolve(found) }
-              })
-              obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'aria-hidden'] })
-              const timer = setTimeout(() => { obs.disconnect(); resolve(null) }, maxWait)
+          return Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'))
+            .find(inp =>
+              !inp.closest('[aria-hidden="true"]') && inp.offsetParent !== null &&
+              !BOARD_EXCLUDED_IDS.has(inp.id) &&
+              ((inp.getAttribute('aria-label') || '') + ' ' + (inp.placeholder || '')).toLowerCase().includes('board')
+            ) || null
+        }
+        // Reactive wait: the pick action may run immediately after the click action
+        // that opens the board picker, before the picker's DOM/animation settles.
+        // Use a MutationObserver so we catch the board input the instant it
+        // becomes visible — no fixed timeout needed. Cap at 1500 ms.
+        // Also observe attribute changes (style/class) in case Pinterest toggles
+        // display via CSS class rather than inserting new DOM nodes.
+        //
+        // If the picker is not already open, try to find and click the board button
+        // ourselves — the preceding click instruction may have used a bad selector.
+        if (!findBoardInput()) {
+          const boardBtn = Array.from(document.querySelectorAll('[role="button"], button'))
+            .find(btn => {
+              const r = btn.getBoundingClientRect()
+              if (r.width === 0 || r.height === 0) return false
+              if (btn.closest('[aria-hidden="true"]')) return false
+              const lbl = (btn.getAttribute('aria-label') || '').trim().toLowerCase()
+              const txt = (btn.textContent || '').trim().toLowerCase()
+              const matchesBoard = lbl.startsWith('board') || txt.startsWith('board')
+              const notCreate = !txt.startsWith('create board') && !lbl.startsWith('create board')
+              return matchesBoard && notCreate
             })
-          }
-
-          let option = await waitForMatchingOption(800)
-
-          if (!option) {
-            // Default list didn't have a match; type to trigger autocomplete.
-            window.FieldAgentUtils.applyTextFill(el, ins.value)
-            option = await waitForMatchingOption(3000)
-          }
-
-          if (option) {
-            console.log(`[FieldAgent] pick: clicking option text="${(option.textContent?.trim() || '').slice(0, 60)}"`)
-            // Full pointer sequence — some React handlers listen on mousedown, not click.
-            option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
-            option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
-            option.click()
+          if (boardBtn) {
+            console.log('[FieldAgent] pick: board picker not open — auto-clicking board button:', boardBtn.textContent.trim().slice(0, 40))
+            boardBtn.click()
           } else {
-            // Keyboard fallback: Down to highlight the first item, Enter to confirm.
-            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true }))
-            await new Promise((r) => setTimeout(r, 80))
-            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }))
+            console.warn('[FieldAgent] pick: board picker not open and board button not found')
           }
-          // Longer settle wait: picker needs time to dismiss autocomplete and show
-          // the selected board row (which may contain the section chevron).
-          await new Promise((r) => setTimeout(r, 1000))
-          const postPickButtons = Array.from(document.querySelectorAll(
-            '[role="option"] button, [role="option"] [role="button"], [role="listbox"] button, [role="listbox"] [role="button"]'
-          ))
-            .filter((b) => !b.closest('[aria-hidden="true"]'))
-            .map((b) => `aria="${b.getAttribute('aria-label') || ''}" txt="${(b.textContent?.trim() || '').slice(0, 20)}"`)
-          console.log(`[FieldAgent] pick: post-click buttons in picker: [${postPickButtons.join(', ')}]`)
+        }
+        const boardPickerInput = await new Promise((resolve) => {
+          const found = findBoardInput()
+          if (found) { resolve(found); return }
+          const obs = new MutationObserver(() => {
+            const inp = findBoardInput()
+            if (inp) { obs.disconnect(); clearTimeout(t); resolve(inp) }
+          })
+          obs.observe(document.body, {
+            childList: true, subtree: true,
+            attributes: true, attributeFilter: ['style', 'class', 'hidden'],
+          })
+          const t = setTimeout(() => { obs.disconnect(); resolve(findBoardInput()) }, 1500)
+        })
+        if (boardPickerInput && el !== boardPickerInput) {
+          console.log('[FieldAgent] pick: board-picker visible — overriding LLM-resolved element with board search input')
+          el = boardPickerInput
+        }
+        // Fallback: LLM may send hint="Miniatures" (the value to pick, not the
+        // field label). If no element found, reactive-wait for the board-picker
+        // search input to appear in the DOM.
+        if (!el) {
+          // Board-picker search input fallback: reactive wait so we catch the
+          // input the moment the board picker overlay appears in the DOM.
+          el = await new Promise((resolve) => {
+            const found = findBoardInput()
+            if (found) { resolve(found); return }
+            const obs = new MutationObserver(() => {
+              const inp = findBoardInput()
+              if (inp) { obs.disconnect(); clearTimeout(t); resolve(inp) }
+            })
+            obs.observe(document.body, { childList: true, subtree: true })
+            const t = setTimeout(() => { obs.disconnect(); resolve(findBoardInput()) }, 2000)
+          })
+          if (el) {
+            console.log(`[FieldAgent] pick: resolved via board-picker fallback aria="${el.getAttribute('aria-label') || ''}" placeholder="${el.placeholder || ''}"`)
+          } else {
+            const allInputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable]'))
+              .filter(e => e.offsetParent !== null && !e.closest('[aria-hidden="true"]'))
+              .map(e => `aria="${e.getAttribute('aria-label') || ''}" ph="${e.placeholder || ''}" id="${e.id || ''}"`)
+            console.warn('[FieldAgent] pick: no board input found. visible inputs:', allInputs)
+          }
+        }
+        // Look ahead: if the next instruction is a click, it may be a section
+        // in the board picker — we'll pass it to PICK_BOARD for atomic click.
+        const _nextClickIns = instructions[_insIdx + 1]
+        const nextHint = (_nextClickIns?.action === 'click')
+          ? (_nextClickIns.fallback_hint || _nextClickIns.value || '').trim()
+          : ''
+        // When the board is already selected Pinterest sometimes shows its
+        // sections immediately on picker open (before any search is typed).
+        // But the board picker's DEFAULT view also shows all boards as listitems
+        // (including boards named "Cthulhu") — we must not confuse a board with
+        // a section.  "Create board" is present in board-picker mode but absent
+        // in section-picker mode, so we use it as a sentinel.
+        const _inBoardPickerMode = () =>
+          Array.from(document.querySelectorAll('button, [role="button"], [role="listitem"]'))
+            .some(e => e.offsetParent !== null && !e.closest('[aria-hidden="true"]') &&
+                       (e.textContent?.trim() || '').toLowerCase().includes('create board'))
+        let pickedEarly = false
+        if (el && nextHint && !_inBoardPickerMode()) {
+          const _snorm = nextHint.toLowerCase()
+          const _earlySection = await new Promise(resolve => {
+            function _findEarly() {
+              if (_inBoardPickerMode()) return null
+              return Array.from(document.querySelectorAll('[role="listitem"], [role="option"], button'))
+                .find(s => !s.closest('[aria-hidden="true"]') && s.offsetParent !== null &&
+                           s.textContent.trim().toLowerCase().startsWith(_snorm)) || null
+            }
+            const _imm = _findEarly()
+            if (_imm) { resolve(_imm); return }
+            const _obs = new MutationObserver(() => {
+              const _found = _findEarly()
+              if (_found) { _obs.disconnect(); clearTimeout(_earlyT); resolve(_found) }
+            })
+            _obs.observe(document.body, { childList: true, subtree: true })
+            const _earlyT = setTimeout(() => { _obs.disconnect(); resolve(null) }, 800)
+          })
+          if (_earlySection) {
+            // Section is visible in section-picker mode — click it from MAIN world
+            // (fiber+event dispatch) so isTrusted=true guards are satisfied.
+            // boardName='' tells PICK_BOARD to skip the board search.
+            console.log(`[FieldAgent] pick: section "${nextHint}" visible in section-picker mode — clicking via PICK_BOARD`)
+            const earlyPickResult = await new Promise(resolve =>
+              chrome.runtime.sendMessage({ type: 'PICK_BOARD', boardName: '', sectionName: nextHint }, r => {
+                if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message })
+                else resolve(r || { ok: false })
+              })
+            )
+            console.log('[FieldAgent] pick: early PICK_BOARD result', JSON.stringify(earlyPickResult))
+            if (earlyPickResult?.result?.section?.ok) {
+              _insIdx++
+              pickedEarly = true
+            }
+          }
+        }
+        if (el && !pickedEarly) {
+          console.log(`[FieldAgent] pick: typing "${ins.value}" into el tag=${el.tagName} aria="${el.getAttribute('aria-label') || ''}" placeholder="${el.placeholder || ''}"`)
+          window.FieldAgentUtils.applyTextFill(el, ins.value)
+          const valueLC = (ins.value || '').toLowerCase()
+          // Wait (event-driven, max 3s) for a text-matching autocomplete result.
+          let matchEl = null
+          await new Promise((resolve) => {
+            function check() {
+              for (const c of document.querySelectorAll('[role="option"], [role="menuitem"], [role="button"], [role="listitem"]')) {
+                if (!c.closest('[aria-hidden="true"]') &&
+                    (c.textContent?.trim() || '').toLowerCase().startsWith(valueLC)) {
+                  matchEl = c; obs.disconnect(); clearTimeout(t); resolve(); return
+                }
+              }
+            }
+            const obs = new MutationObserver(check)
+            obs.observe(document.body, { childList: true, subtree: true })
+            const t = setTimeout(() => { obs.disconnect(); resolve() }, 3000)
+            check()
+          })
+          if (matchEl) {
+            const mText = (matchEl.textContent?.trim() || '').slice(0, 40)
+            const mRole = matchEl.getAttribute('role') || matchEl.tagName
+            console.log(`[FieldAgent] pick: match found "${mText}" [${mRole}]`)
+            // Brief settle before clicking — gives Pinterest time to finish registering
+            // native event listeners on the autocomplete dropdown items.
+            await new Promise(r => setTimeout(r, 350))
+            // For board autocomplete listitems we try approaches in order.
+            let clickOk
+            if (mRole === 'listitem') {
+              // Snapshot current listitem texts — used after the pick attempt to detect
+              // a board→section transition (board selection succeeded even if matchEl
+              // wasn't removed from DOM, because React may reuse the DOM element).
+              const beforeListitemTexts = new Set(
+                Array.from(document.querySelectorAll('[role="listitem"]'))
+                  .filter(e => !e.closest('[aria-hidden="true"]') && e.offsetParent !== null)
+                  .map(e => (e.textContent?.trim() || '').toLowerCase())
+              )
+
+              // 1. PICK_BOARD via executeScript in MAIN world.
+              //    Events bubble through React's event delegation (root container
+              //    listener wrapped by the world:MAIN document_start patch) so
+              //    React's SyntheticEvent gets isTrusted=true via the Proxy.
+              // nextHint already computed above from lookahead.
+              console.log('[FieldAgent] pick: trying PICK_BOARD (MAIN world)' + (nextHint ? ` sectionName="${nextHint}"` : ''))
+              const pickResult = await new Promise(resolve =>
+                chrome.runtime.sendMessage({ type: 'PICK_BOARD', boardName: mText, sectionName: nextHint || undefined }, r => {
+                  if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message })
+                  else resolve(r || { ok: false })
+                })
+              )
+              console.log('[FieldAgent] pick: PICK_BOARD result', JSON.stringify(pickResult))
+              // If the atomic board+section click succeeded, skip the next click instruction.
+              if (pickResult?.result?.section?.ok && nextHint) {
+                console.log(`[FieldAgent] pick: section "${nextHint}" clicked atomically — skipping next instruction`)
+                _insIdx++
+              }
+              await new Promise(r => setTimeout(r, 800))
+              // Primary: listitem left the DOM.
+              // Secondary: listitem content changed (board→section view, React reuses DOM).
+              const afterListitems = Array.from(document.querySelectorAll('[role="listitem"]'))
+                .filter(e => !e.closest('[aria-hidden="true"]') && e.offsetParent !== null)
+              const listitemContentChanged = afterListitems.some(
+                e => !(beforeListitemTexts.has((e.textContent?.trim() || '').toLowerCase()))
+              )
+              // Tertiary: board button now shows the board name (PICK_BOARD reports this).
+              // Section picker items often have no [role="listitem"], so DOM checks can
+              // report clickOk=false even when the board WAS selected. Checking the board
+              // button text is the most reliable indicator that a selection occurred.
+              const boardBtnText = (pickResult?.result?.boardBtnText || '').toLowerCase()
+              const boardBtnShowsBoard = boardBtnText.length > 0 && boardBtnText.includes(valueLC)
+              clickOk = !document.contains(matchEl) || listitemContentChanged || boardBtnShowsBoard
+              console.log(`[FieldAgent] pick: PICK_BOARD clickOk=${clickOk} (gone=${!document.contains(matchEl)} contentChanged=${listitemContentChanged} boardBtn="${boardBtnText}")`)
+
+              if (!clickOk) {
+                // 2. React fiber walk from isolated world (fallback).
+                clickOk = reactFiberClick(matchEl)
+              }
+
+              if (!clickOk) {
+                // 3. Synthetic event sequence with hover pre-conditioning.
+                //    mouseover/mousemove fire first so Pinterest's picker registers
+                //    the item as "active" before the mousedown commit event fires.
+                //    The isTrusted-bypass Proxy (installed by INJECT_MAIN_PATCH) makes
+                //    the mousedown handler see isTrusted=true.
+                console.log('[FieldAgent] pick: trying synthetic events with hover pre-conditioning')
+                const sRect = matchEl.getBoundingClientRect()
+                const sCx = Math.round(sRect.left + sRect.width / 2)
+                const sCy = Math.round(sRect.top + sRect.height / 2)
+                const sOpts = { bubbles: true, cancelable: true, composed: true, button: 0, buttons: 1, clientX: sCx, clientY: sCy, view: window }
+                // Hover pre-conditioning
+                matchEl.dispatchEvent(new MouseEvent('mouseover', sOpts))
+                matchEl.dispatchEvent(new MouseEvent('mousemove', sOpts))
+                await new Promise(r => setTimeout(r, 150))
+                // Press sequence
+                matchEl.dispatchEvent(new PointerEvent('pointerdown', { ...sOpts, isPrimary: true, pointerId: 1 }))
+                matchEl.dispatchEvent(new MouseEvent('mousedown', sOpts))
+                await new Promise(r => setTimeout(r, 80))
+                matchEl.dispatchEvent(new MouseEvent('mouseup', { ...sOpts, buttons: 0 }))
+                matchEl.dispatchEvent(new PointerEvent('pointerup', { ...sOpts, buttons: 0, isPrimary: true, pointerId: 1 }))
+                matchEl.dispatchEvent(new MouseEvent('click', { ...sOpts, buttons: 0, detail: 1 }))
+                await new Promise(r => setTimeout(r, 300))
+                clickOk = !document.contains(matchEl)
+                console.log(`[FieldAgent] pick: synthetic events clickOk=${clickOk} (el in DOM: ${document.contains(matchEl)})`)
+              }
+
+              if (!clickOk) {
+                // 3. React fiber keyboard nav — works when Pinterest exposes onKeyDown
+                //    via React props (fakes isTrusted:true so handlers accept it).
+                //    Pinterest's board picker uses document.addEventListener instead,
+                //    so this typically returns false and we fall through.
+                console.log('[FieldAgent] pick: trying reactFiberKeyDown ArrowDown+Enter on search input')
+                reactFiberKeyDown(el, 'ArrowDown', 40)
+                await new Promise(r => setTimeout(r, 300))
+                reactFiberKeyDown(el, 'Enter', 13)
+                await new Promise(r => setTimeout(r, 500))
+                clickOk = !document.contains(matchEl)
+                console.log(`[FieldAgent] pick: reactFiberKeyDown clickOk=${clickOk} (el in DOM: ${document.contains(matchEl)})`)
+              }
+
+              if (!clickOk) {
+                // 4. Plain DOM keyboard events on the focused search input.
+                //    isTrusted=false but keyboard handlers in board pickers rarely check
+                //    isTrusted (unlike mouse handlers, which use it for anti-bot).
+                console.log('[FieldAgent] pick: trying synthetic keyboard ArrowDown+Enter')
+                try { el.focus() } catch (_) {}
+                const kOpts = { bubbles: true, cancelable: true, composed: true }
+                el.dispatchEvent(new KeyboardEvent('keydown', { ...kOpts, key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40 }))
+                await new Promise(r => setTimeout(r, 250))
+                el.dispatchEvent(new KeyboardEvent('keydown', { ...kOpts, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }))
+                await new Promise(r => setTimeout(r, 500))
+                clickOk = !document.contains(matchEl)
+                console.log(`[FieldAgent] pick: synthetic keyboard clickOk=${clickOk} (el in DOM: ${document.contains(matchEl)})`)
+              }
+
+              if (!clickOk) {
+                // 5. matchEl.click() — fires a trusted click event (isTrusted=true) without
+                //    a full mouse-event sequence. Doesn't cause OS-level focus transfer so
+                //    the search input doesn't blur before the click handler fires.
+                //    Works when Pinterest's selection handler is on 'click', not only 'mousedown'.
+                console.log('[FieldAgent] pick: trying matchEl.click()')
+                matchEl.click()
+                await new Promise(r => setTimeout(r, 500))
+                clickOk = !document.contains(matchEl)
+                console.log(`[FieldAgent] pick: matchEl.click() clickOk=${clickOk} (el in DOM: ${document.contains(matchEl)})`)
+              }
+
+              if (!clickOk) {
+                // 6. CDP trusted mouse events — isTrusted=true via chrome.debugger.
+                //    Requires no other debugger attached to the tab (closing the SW
+                //    DevTools inspector unblocks this).
+                console.log('[FieldAgent] pick: trying CDP click')
+                await cdpClick(matchEl)
+                // cdpClick.ok does not reliably indicate board selection; post-pick check below decides
+              }
+            } else {
+              clickOk = await cdpClick(matchEl)
+              if (!clickOk) reactFiberClick(matchEl)
+            }
+          } else {
+            // No specific match element — try CDP keyboard ArrowDown+Enter focused
+            // on the search input as a last-resort navigation attempt.
+            console.log('[FieldAgent] pick: no match element — keyboard fallback')
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true }))
+            await new Promise((r) => setTimeout(r, 120))
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }))
+          }
+        } // end if (el && !pickedEarly)
+        if (el) {
+          // Wait for picker to settle (section list may appear after board selection).
+          await new Promise((r) => setTimeout(r, pickedEarly ? 200 : 1000))
+          // Show board button text and ALL visible interactive elements so we can
+          // see if a separate "Section" button appeared after board selection.
+          const boardBtn = document.querySelector('[aria-label="Board"], [data-testid*="board-dropdown"]')
+          const boardText = boardBtn ? (boardBtn.textContent?.trim() || '').slice(0, 50) : '(board btn not found)'
+          const visibleSections = Array.from(document.querySelectorAll('[role="listitem"]'))
+            .filter(e => !e.closest('[aria-hidden="true"]'))
+            .map(e => (e.textContent?.trim() || '').slice(0, 20))
+          const allBtns = Array.from(document.querySelectorAll('button, [role="button"], [role="option"]'))
+            .filter(e => e.offsetParent !== null && !e.closest('[aria-hidden="true"]'))
+            .map(e => `"${(e.getAttribute('aria-label') || e.textContent?.trim() || '').slice(0, 30)}"`)
+          console.log(`[FieldAgent] pick: post-pick board="${boardText}" sections=[${visibleSections.slice(0, 10).join(', ')}] btns=[${allBtns.slice(0, 20).join(', ')}]`)
         }
       } else if (ins.action === 'click') {
         // Try immediately; if the element isn't in the DOM yet (e.g. a section
@@ -361,9 +840,54 @@
         let el = window.FieldAgentUtils.resolveElement(ins)
         if (!el) el = await waitForTarget(ins, 2000)
         const hint = ins.fallback_hint || ''
+        // If hint is set and the resolved element's text doesn't match, search
+        // for an interactive element whose text includes the hint.  This handles
+        // generic selectors like [role="listitem"] when multiple listitems are
+        // present (e.g. "Miniatures" section vs "Cthulhu" section in the board
+        // picker's section list).  Use a reactive wait so async-rendered items
+        // (sections that appear after a short delay) are caught.
+        if (hint) {
+          const hintLC = hint.trim().toLowerCase()
+          // Use startsWith so the description field (which contains "Call of Cthulhu
+          // campaigns" in its full textContent) is never matched when hint="Cthulhu".
+          // Also cap the candidate text length: board/section labels are short;
+          // form-field containers with long descendant text are excluded.
+          const textMatches = (candidate) => {
+            const txt = (candidate.textContent?.trim() || '').toLowerCase()
+            return txt.length < 80 && txt.startsWith(hintLC)
+          }
+          if (!el || !textMatches(el)) {
+            const findByText = () =>
+              Array.from(document.querySelectorAll(
+                '[role="option"], [role="menuitem"], [role="listitem"],' +
+                ' button, [role="button"]'
+              )).find(e =>
+                !e.closest('[aria-hidden="true"]') &&
+                e.offsetParent !== null &&
+                textMatches(e)
+              ) || null
+            const textMatch = await new Promise(resolve => {
+              const immediate = findByText()
+              if (immediate) { resolve(immediate); return }
+              const obs = new MutationObserver(() => {
+                const m = findByText()
+                if (m) { obs.disconnect(); clearTimeout(t); resolve(m) }
+              })
+              obs.observe(document.body, {
+                childList: true, subtree: true,
+                attributes: true, attributeFilter: ['style', 'class', 'hidden', 'aria-hidden'],
+              })
+              const t = setTimeout(() => { obs.disconnect(); resolve(findByText()) }, 4000)
+            })
+            if (textMatch) {
+              console.log(`[FieldAgent] click: hint="${hint}" — text-matched el tag=${textMatch.tagName} txt="${(textMatch.textContent?.trim() || '').slice(0, 40)}"`)
+              el = textMatch
+            }
+          }
+        }
         if (el) {
-          console.log(`[FieldAgent] click: found el tag=${el.tagName} aria="${el.getAttribute('aria-label') || ''}" txt="${(el.textContent?.trim() || '').slice(0, 40)}"`)
-          el.click()
+          console.log(`[FieldAgent] click: found el tag=${el.tagName} role="${el.getAttribute('role') || ''}" txt="${(el.textContent?.trim() || '').slice(0, 40)}"`)
+          if (!reactFiberClick(el)) el.click()
         } else {
           // Log what was available so we can diagnose the missing selector.
           const sel = ins.selector_hint || ''
@@ -371,8 +895,8 @@
             .map((b) => `<${b.tagName.toLowerCase()} aria-label="${b.getAttribute('aria-label') || ''}" text="${(b.textContent?.trim() || '').slice(0, 40)}">`)
             .slice(0, 20)
           console.warn(
-            `[FieldAgent] click: element not found | selector="${sel}" fallback="${hint}"\n`,
-            'Available buttons/options:', available,
+            `[FieldAgent] click: element not found | selector="${sel}" fallback="${hint}"\n` +
+            'Available: ' + available.join(' | ')
           )
         }
         // After any chevron/section click attempt (found or not), log visible
@@ -392,6 +916,7 @@
       }
     }
     } finally {
+      chrome.runtime.sendMessage({ type: 'CDP_DETACH' })
       applyingInstructions = false
     }
   }
