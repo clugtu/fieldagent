@@ -758,8 +758,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 el.dispatchEvent(new Ctor(t, Object.assign({ isPrimary: true }, base)))
               })
             }
-            firePointerClick(target)
-            var boardResult = { ok: true, method: 'pointer-sequence' }
+            // Try the fiber-based click on a nested interactive descendant first —
+            // confirmed by live testing to be the one that actually selects the
+            // board; a native dispatchEvent sequence never registered as a real
+            // selection for this listitem in three separate live tests, so it's
+            // demoted to a fallback below instead of always being tried (and
+            // waited on) first.
+            var innerTarget = findInnerInteractive(target)
+            console.log('[FieldAgent] board inner interactive descendant:',
+              innerTarget ? (innerTarget.tagName + '[role=' + (innerTarget.getAttribute('role')||'none') + ']') : 'none found')
+            var fiberHits = fiberClick(innerTarget || target, [])
+            console.log('[FieldAgent] board fiberClick hit:', fiberHits)
+            var boardResult = { ok: true, method: fiberHits ? ('fiber-click' + (innerTarget ? '(inner)' : '')) : 'fiber-click-no-handler' }
 
             if (sectionName) {
               // Give React time to re-render the section picker after the board click.
@@ -800,90 +810,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 return t.toLowerCase().includes(norm)
               })
               if (stillBoardView) {
-                // firePointerClick's native dispatchEvent sequence doesn't always
-                // reach Pinterest's real selection handler — confirmed by manual
-                // testing, where clicking the same listitem by hand immediately
-                // reveals the section list, but the synthetic event sequence
-                // leaves the app state unchanged. Try invoking the fiber's real
-                // event handler directly (bypasses the DOM event system
-                // entirely) before falling back to the more invasive
-                // deselect+reselect hack below.
-                //
-                // Use fiberClick (stops at the FIRST handler found), not
-                // fiberClickAll — a real click only ever invokes the closest
-                // matching handler unless it explicitly skips
-                // stopPropagation, which we have no way to detect here.
-                // fiberClickAll fired both a close ancestor's onClick (the
-                // real selection) AND a distant ancestor's onClick in
-                // testing, which dismissed the whole picker instead of
-                // revealing the section list.
-                console.log('[FieldAgent] board click no-op — trying direct fiber click')
-                var innerTarget = findInnerInteractive(target)
-                console.log('[FieldAgent] board inner interactive descendant:',
-                  innerTarget ? (innerTarget.tagName + '[role=' + (innerTarget.getAttribute('role')||'none') + ']') : 'none found')
-                var fiberHits = fiberClick(innerTarget || target, [])
-                console.log('[FieldAgent] board fiberClick hit:', fiberHits)
-                if (fiberHits) {
-                  await new Promise(function (r) { setTimeout(r, 400) })
-                  var postFiberItems = Array.from(document.querySelectorAll('[role="listitem"], [role="option"], button'))
-                    .filter(function(el) {
-                      var r = el.getBoundingClientRect()
-                      return r.width > 0 && r.height > 0 && !el.closest('[aria-hidden="true"]')
-                    })
-                    .map(function(el) { return (el.getAttribute('role')||el.tagName) + ' "' + el.textContent.trim().slice(0,40) + '"' })
-                  console.log('[FieldAgent] post-fiberClick visible items:', JSON.stringify(postFiberItems))
-                  stillBoardView = postFiberItems.some(function(t) { return t.toLowerCase().includes(norm) })
-                  if (!stillBoardView) boardResult.method += '+fiberClick' + (innerTarget ? '(inner)' : '')
-                }
+                // The fiber click either found no handler or didn't register as a
+                // real selection — fall back to native pointer-event dispatch,
+                // which hasn't worked in testing so far but may for board/DOM
+                // shapes we haven't tried.
+                console.log('[FieldAgent] fiber click no-op — trying native pointer sequence')
+                firePointerClick(target)
+                boardResult.method += '+pointer-sequence'
+                await new Promise(function (r) { setTimeout(r, 400) })
+                var postPointerItems = Array.from(document.querySelectorAll('[role="listitem"], [role="option"], button'))
+                  .filter(function(el) {
+                    var r = el.getBoundingClientRect()
+                    return r.width > 0 && r.height > 0 && !el.closest('[aria-hidden="true"]')
+                  })
+                  .map(function(el) { return (el.getAttribute('role')||el.tagName) + ' "' + el.textContent.trim().slice(0,40) + '"' })
+                console.log('[FieldAgent] post-pointer-sequence visible items:', JSON.stringify(postPointerItems))
+                stillBoardView = postPointerItems.some(function(t) { return t.toLowerCase().includes(norm) })
               }
               if (stillBoardView) {
-                console.log('[FieldAgent] board click still no-op after fiber attempt — attempting shape-match deselect + fresh pointer sequence')
+                console.log('[FieldAgent] board click still no-op — scanning picker fiber for direct state injection')
 
-                // Walk picker fiber to find and log all hook shapes;
-                // deselect the {boardId, title, url} board-state hook.
+                // Full fiber scan: collect boardStateDispatch AND allBoards without
+                // breaking early. We need both to inject the target board state directly
+                // (bypassing DOM events entirely, which Pinterest's security checks block).
                 var pFk = Object.keys(pickerRoot).find(function(k) {
                   return k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
                 })
-                var deselected = false
+                var boardStateDispatch = null  // dispatch() for {boardId,title,url} form state
+                var allBoards = null           // all_boards list from picker cache
                 if (pFk) {
                   var compIdx = 0
-                  fiberScan: for (var pf = pickerRoot[pFk]; pf && !deselected; pf = pf.return) {
+                  for (var pf = pickerRoot[pFk]; pf; pf = pf.return) {
                     if (!pf.memoizedState) { compIdx++; continue }
                     var hookLog = []
                     var ph = pf.memoizedState, phIdx = 0
-                    while (ph && phIdx < 50) {
+                    while (ph && phIdx < 55) {
                       var phVal = ph.memoizedState
                       var pt = typeof phVal
                       if (pt === 'string' && phVal.length > 0 && phVal.length < 60) hookLog.push(phIdx + ':s:' + phVal)
                       else if (pt === 'boolean') hookLog.push(phIdx + ':b:' + phVal)
                       else if (pt === 'number') hookLog.push(phIdx + ':n:' + phVal)
                       else if (pt === 'object' && phVal !== null) {
-                        var keys = Object.keys(phVal)
-                        hookLog.push(phIdx + ':o:{' + keys.slice(0, 4).join(',') + '}')
-                        // Log actual values for board-shaped hooks
+                        var pkeys = Object.keys(phVal)
+                        hookLog.push(phIdx + ':o:{' + pkeys.slice(0, 4).join(',') + '}')
                         if ('boardId' in phVal && 'title' in phVal) {
-                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + '] board-state:', JSON.stringify(phVal).slice(0, 120))
+                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + '] board-state:', JSON.stringify(phVal).slice(0, 150))
                         }
-                        // Log the board data cache (all_boards list)
-                        if ('all_boards' in phVal) {
-                          var ab = phVal.all_boards || []
-                          var sample = ab[0] ? JSON.stringify(ab[0]).slice(0, 100) : 'empty'
-                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + '] all_boards len=' + ab.length + ' sample=' + sample)
+                        // Capture all_boards once — log every entry in full so we can
+                        // identify the name/url field names for direct injection.
+                        if ('all_boards' in phVal && !allBoards) {
+                          allBoards = phVal.all_boards || []
+                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + '] all_boards len=' + allBoards.length)
+                          allBoards.forEach(function(b, bi) {
+                            console.log('[FieldAgent] all_boards[' + bi + ']:', JSON.stringify(b).slice(0, 300))
+                          })
                         }
-                        // Shape match: {boardId, title, url} = the form's board selection state
+                        // Capture board-state dispatch (first occurrence only).
                         if ('boardId' in phVal && 'title' in phVal && 'url' in phVal &&
-                            ph.queue && ph.queue.dispatch) {
-                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + ']: board-shape match, dispatching null to deselect')
-                          var dispatchOk = false
-                          try { ph.queue.dispatch(null); dispatchOk = true } catch (e) {
-                            console.warn('[FieldAgent] dispatch(null) failed:', e.message)
-                            try { ph.queue.dispatch(function() { return null }); dispatchOk = true } catch (e2) {
-                              console.warn('[FieldAgent] dispatch(fn) also failed:', e2.message)
-                            }
-                          }
-                          if (dispatchOk) { deselected = true; break fiberScan }
-                        } else if ('boardId' in phVal && 'title' in phVal && 'url' in phVal) {
-                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + ']: board-shape match but no dispatch')
+                            ph.queue && ph.queue.dispatch && !boardStateDispatch) {
+                          boardStateDispatch = ph.queue.dispatch
+                          console.log('[FieldAgent] comp[' + compIdx + '] hook[' + phIdx + ']: board-state dispatch saved')
                         }
                       }
                       ph = ph.next; phIdx++
@@ -893,29 +879,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                   }
                 }
 
-                if (deselected) {
-                  // Wait for deselect re-render, then fire pointer sequence as fresh selection.
-                  await new Promise(function(r) { setTimeout(r, 200) })
-                  var freshItems = Array.from(pickerRoot.querySelectorAll('[role="listitem"], [role="option"]'))
-                  var freshTarget = freshItems.find(function(el) {
-                    return !el.closest('[aria-hidden="true"]') &&
-                           el.offsetParent !== null &&
-                           el.textContent.trim().toLowerCase().startsWith(norm)
-                  }) || target
-                  console.log('[FieldAgent] fresh pointer-click on:', freshTarget.textContent.trim().slice(0, 40))
-                  firePointerClick(freshTarget)
-                  boardResult.method += '+deselect+reselect'
-                  await new Promise(function(r) { setTimeout(r, 400) })
-                  var postDeselect = Array.from(document.querySelectorAll('[role="listitem"], [role="option"], button'))
-                    .filter(function(el) {
-                      var r = el.getBoundingClientRect()
-                      return r.width > 0 && r.height > 0 && !el.closest('[aria-hidden="true"]')
-                    })
-                    .map(function(el) { return (el.getAttribute('role')||el.tagName) + ' "' + el.textContent.trim().slice(0,40) + '"' })
-                  console.log('[FieldAgent] post-reselect visible items:', JSON.stringify(postDeselect))
-                } else {
-                  console.log('[FieldAgent] board UUID not found in picker hooks — cannot deselect')
+                // Strategy 1: direct state injection — find the target board in all_boards
+                // and dispatch its {boardId,title,url} directly, bypassing DOM events.
+                var injected = false
+                if (boardStateDispatch && allBoards && allBoards.length > 0) {
+                  var normSlug = norm.replace(/[^a-z0-9]/g, '')
+                  var targetBoardEntry = null
+                  for (var bi = 0; bi < allBoards.length; bi++) {
+                    var b = allBoards[bi]
+                    var bName = (b.name || b.board_name || b.title || '').toLowerCase()
+                    var bUrl  = (b.url  || b.board_url  || '').toLowerCase()
+                    var bSlug = bUrl.replace(/[^a-z0-9]/g, '')
+                    if (bName === norm || bName.startsWith(norm) || bSlug.includes(normSlug)) {
+                      targetBoardEntry = b; break
+                    }
+                  }
+                  console.log('[FieldAgent] target board entry:', targetBoardEntry
+                    ? JSON.stringify(targetBoardEntry).slice(0, 250)
+                    : 'NOT FOUND — board names: ' + allBoards.map(function(b) { return b.name || b.board_name || b.title || '?' }).join(', '))
+                  if (targetBoardEntry) {
+                    var newBoardState = {
+                      boardId: targetBoardEntry.id || targetBoardEntry.board_id,
+                      title:   targetBoardEntry.name || targetBoardEntry.board_name || targetBoardEntry.title || boardName,
+                      url:     targetBoardEntry.url  || targetBoardEntry.board_url  || ''
+                    }
+                    console.log('[FieldAgent] injecting board state:', JSON.stringify(newBoardState))
+                    try {
+                      boardStateDispatch(newBoardState)
+                      injected = true
+                      boardResult.method += '+direct-inject'
+                    } catch (e) {
+                      console.warn('[FieldAgent] direct inject failed:', e.message)
+                    }
+                  }
                 }
+
+                // Strategy 2: deselect + fresh pointer click fallback.
+                if (!injected) {
+                  if (boardStateDispatch) {
+                    console.log('[FieldAgent] direct inject unavailable — falling back to deselect+reselect')
+                    try { boardStateDispatch(null) } catch (e) {}
+                    await new Promise(function(r) { setTimeout(r, 200) })
+                    var freshItems = Array.from(pickerRoot.querySelectorAll('[role="listitem"], [role="option"]'))
+                    var freshTarget = freshItems.find(function(el) {
+                      return !el.closest('[aria-hidden="true"]') &&
+                             el.offsetParent !== null &&
+                             el.textContent.trim().toLowerCase().startsWith(norm)
+                    }) || target
+                    console.log('[FieldAgent] fresh pointer-click on:', freshTarget.textContent.trim().slice(0, 40))
+                    firePointerClick(freshTarget)
+                    boardResult.method += '+deselect+reselect'
+                  } else {
+                    console.log('[FieldAgent] no board state dispatch found — cannot recover')
+                  }
+                }
+
+                // Brief settle: let React re-render after inject or reselect.
+                await new Promise(function(r) { setTimeout(r, 500) })
+                var postRecover = Array.from(document.querySelectorAll('[role="listitem"], [role="option"], button'))
+                  .filter(function(el) {
+                    var r = el.getBoundingClientRect()
+                    return r.width > 0 && r.height > 0 && !el.closest('[aria-hidden="true"]')
+                  })
+                  .map(function(el) { return (el.getAttribute('role')||el.tagName) + ' "' + el.textContent.trim().slice(0,40) + '"' })
+                console.log('[FieldAgent] post-recover visible items:', JSON.stringify(postRecover))
               }
 
               var sectionResult = await clickSection(sectionName, 4000)
