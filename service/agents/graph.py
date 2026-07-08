@@ -19,6 +19,7 @@ import json
 from typing import Annotated, Any
 from uuid import uuid4
 
+import httpx
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -107,8 +108,72 @@ download and attach the file automatically.
 """
 
 
+def _call_inspect_callback(state: InspectorState) -> dict | None:
+    """If the task has an inspect_callback_url, delegate fill decisions there.
+
+    Returns an _analyze_result-shaped dict if the callback was used, or None
+    to fall through to the local LLM path.
+    """
+    callback_url = state["task_payload"].get("extra", {}).get("inspect_callback_url")
+    if not callback_url:
+        return None
+
+    payload = {
+        "task_id": state["task_id"],
+        "task_payload": state["task_payload"],
+        "snapshot": state["snapshot"],
+        "answer": state.get("answer"),
+    }
+    try:
+        resp = httpx.post(callback_url, json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.warning("inspect_callback failed (%s), falling back to local LLM", exc)
+        return None
+
+    status = data.get("status", "instructions")
+    logger.info("inspect_callback status=%s task=%s", status, state["task_id"])
+
+    if status == "instructions":
+        return {
+            "decision": "fill",
+            "_prefilled_instructions": data.get("instructions", []),
+            "_prefilled_step_complete": data.get("step_complete", False),
+            "_prefilled_expect_next_page": data.get("expect_next_page", False),
+            "_prefilled_notes": data.get("notes", ""),
+        }
+    if status == "awaiting_input":
+        q = data.get("question", {})
+        return {
+            "decision": "ask",
+            "question": q.get("text", "The agent needs more information."),
+            "options": q.get("options", []),
+            "context": q.get("context", ""),
+        }
+    if status == "complete":
+        return {
+            "decision": "done",
+            "notes": data.get("notes", ""),
+        }
+    # Unknown status — fall back to fill with whatever was returned
+    return {
+        "decision": "fill",
+        "_prefilled_instructions": data.get("instructions", []),
+        "_prefilled_notes": f"Unknown callback status: {status}",
+    }
+
+
 def analyze(state: InspectorState) -> dict:
-    """Decide: fill now, ask the caller, or declare done."""
+    """Decide: fill now, ask the caller, or declare done.
+
+    If the task payload carries an inspect_callback_url, MiniForge is the
+    decision-maker and is called instead of the local LLM.
+    """
+    callback_result = _call_inspect_callback(state)
+    if callback_result is not None:
+        return {"messages": [], "_analyze_result": callback_result}
+
     context = (
         f"TASK:\n{json.dumps(state['task_payload'], indent=2)}\n\n"
         f"SNAPSHOT:\n{json.dumps(state['snapshot'], indent=2)}"
@@ -164,7 +229,23 @@ def ask(state: InspectorState) -> dict:
 
 
 def fill(state: InspectorState) -> dict:
-    """Generate fill instructions, incorporating any caller answer."""
+    """Generate fill instructions, incorporating any caller answer.
+
+    If analyze() already resolved fill instructions via the callback, use those
+    directly without calling the local LLM.
+    """
+    prefilled = state.get("_analyze_result", {})
+    if "_prefilled_instructions" in prefilled:
+        return {
+            "messages": [],
+            "instructions": prefilled["_prefilled_instructions"],
+            "step_complete": prefilled.get("_prefilled_step_complete", False),
+            "expect_next_page": prefilled.get("_prefilled_expect_next_page", False),
+            "notes": prefilled.get("_prefilled_notes", ""),
+            "outcome": "instructions",
+            "question": None,
+        }
+
     context = (
         f"TASK:\n{json.dumps(state['task_payload'], indent=2)}\n\n"
         f"SNAPSHOT:\n{json.dumps(state['snapshot'], indent=2)}"

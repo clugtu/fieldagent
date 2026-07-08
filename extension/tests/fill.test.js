@@ -22,10 +22,26 @@ describe('resolveElement', () => {
     document.body.innerHTML = `<input aria-label="Title" type="text" />`
     const el = resolveElement({
       selector_hint: '',
-      fallback_hint: 'title input field',
+      fallback_hint: 'title',
       action: 'type',
     })
     expect(el).not.toBeNull()
+  })
+
+  test('requires ALL long words in hint to match (prevents ambiguous fallback)', () => {
+    // Board search input not in DOM yet, tag input has "search" but not "board".
+    // Only the board search input — once it appears — should match.
+    document.body.innerHTML = `
+      <input id="tag-search" placeholder="Search for a tag" type="text" />
+      <input id="board-search" placeholder="Search for a board" type="text" />
+    `
+    const el = resolveElement({
+      selector_hint: '',
+      fallback_hint: 'Search for a board',
+      action: 'type',
+    })
+    expect(el).not.toBeNull()
+    expect(el.id).toBe('board-search')
   })
 
   test('falls back to keyword matching on placeholder', () => {

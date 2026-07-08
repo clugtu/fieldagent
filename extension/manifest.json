@@ -7,8 +7,12 @@
   "permissions": [
     "storage",
     "activeTab",
+    "tabs",
     "sidePanel",
-    "alarms"
+    "alarms",
+    "downloads",
+    "debugger",
+    "scripting"
   ],
 
   "host_permissions": [
@@ -22,6 +26,12 @@
   },
 
   "content_scripts": [
+    {
+      "matches": ["https://www.pinterest.com/*"],
+      "js": ["content/pinterest-patch.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": ["https://*/*", "http://*/*"],
       "js": ["lib/dom-utils.js", "content/content.js"],
