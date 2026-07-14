@@ -8,7 +8,7 @@ langchain-core>=0.3.86
 langgraph>=0.6.11
 anthropic>=0.116.0
 httpx>=0.27.0
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 
 # testing
 pytest>=8.4.2
