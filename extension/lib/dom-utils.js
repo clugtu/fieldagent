@@ -241,6 +241,60 @@ function extractSnapshot(platformHint) {
   }
 }
 
+// After a Pinterest publish, a "View Pin" link appears (usually inside a toast)
+// pointing at the new pin's real permalink. window.location.href is unreliable
+// here — Pinterest frequently stays on the pin-builder page instead of
+// navigating, so the current URL never becomes the pin URL. Read the
+// permalink directly off the anchor instead.
+function findPublishedPinUrl() {
+  const anchors = typeof document !== 'undefined'
+    ? Array.from(document.querySelectorAll('a[href]'))
+    : []
+  const isPinLink = (a) => /\/pin\/\d+/.test(a.href)
+  const byText = anchors.find((a) => {
+    const text = (a.textContent || '').trim().toLowerCase()
+    return text.includes('view pin') && isPinLink(a)
+  })
+  if (byText) return byText.href
+  const byPattern = anchors.find(isPinLink)
+  return byPattern ? byPattern.href : null
+}
+
+// Finds the action inside Pinterest's "Your Pin has been published!" toast —
+// confirmed against the live site to be an <a href="/pin/<id>"> whose visible
+// text is just "View" (aria-label "Navigate to created Pin"), scoped inside
+// a [data-test-id="toast"] container. Its href already carries the real pin
+// permalink (see findPublishedPinUrl, used as the read-path once this is
+// found), so this only needs to locate the clickable element, not parse its
+// label — which is good, since Pinterest is free to change that label text.
+function findViewPinAction() {
+  const toasts = typeof document !== 'undefined'
+    ? Array.from(document.querySelectorAll('[data-test-id="toast"], [aria-label="Toast notification"]'))
+    : []
+  if (toasts.length > 0) {
+    for (const toast of toasts) {
+      if (toast.closest('[aria-hidden="true"]')) continue
+      if (!(toast.textContent || '').toLowerCase().includes('published')) continue
+      const action = toast.querySelector('a[href], button, [role="button"]')
+      if (action) return action
+    }
+    // A toast wrapper exists but none of them is the publish-success one
+    // (could be an unrelated toast, e.g. "Upload complete") — don't fall
+    // through to the broad match below, which could grab an unrelated link.
+    return null
+  }
+  // Fallback in case Pinterest drops the toast wrapper entirely: broad text match.
+  const candidates = typeof document !== 'undefined'
+    ? Array.from(document.querySelectorAll('button, [role="button"], a[href]'))
+    : []
+  return candidates.find((el) => {
+    if (el.closest('[aria-hidden="true"]')) return false
+    const text = (el.textContent || '').trim().toLowerCase()
+    const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase()
+    return text === 'view pin' || text === 'view' || aria.includes('created pin')
+  }) || null
+}
+
 function resolveElement(instruction) {
   if (instruction.selector_hint) {
     try {
@@ -431,8 +485,8 @@ function pasteFileIntoDropZone(dropZone, { base64, mimeType, filename }) {
 
 if (typeof module !== 'undefined') {
   // CommonJS — used by Jest tests
-  module.exports = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction, injectFile, pasteFileIntoDropZone }
+  module.exports = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction, injectFile, pasteFileIntoDropZone, findPublishedPinUrl, findViewPinAction }
 } else {
   // Browser content script — expose for content.js
-  window.FieldAgentUtils = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction, injectFile, pasteFileIntoDropZone }
+  window.FieldAgentUtils = { nearestLabel, extractSnapshot, resolveElement, applyTextFill, applyInstruction, injectFile, pasteFileIntoDropZone, findPublishedPinUrl, findViewPinAction }
 }
