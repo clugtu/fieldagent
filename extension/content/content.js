@@ -12,7 +12,9 @@
 ;(function () {
   'use strict'
 
-  const { extractSnapshot, applyInstruction } = window.FieldAgentUtils
+  const {
+    extractSnapshot, applyInstruction, findPublishedPinUrl, findViewPinAction,
+  } = window.FieldAgentUtils
 
   const HOSTNAME_HINTS = {
     'www.facebook.com': 'facebook',
@@ -38,6 +40,49 @@
   let taskStartUrl = null        // locked when the first inspect for this task runs
   let allowPostNavInspect = false  // lifted once after the user clicks Publish
 
+  // ─── "View Pin" watcher ──────────────────────────────────────────────────────
+  // Pinterest confirms a publish with a toast ("Your Pin has been published!")
+  // containing a "View" action whose href already carries the new pin's real
+  // permalink (confirmed against the live site — see findViewPinAction).
+  // window.location.href is not a reliable result_url on its own: Pinterest
+  // frequently stays on the pin-builder page instead of navigating. Watch the
+  // DOM directly for that action the moment Publish is clicked, read the URL
+  // off it, and click it so the user lands on the pin.
+  let taskCompleted = false
+  let pinWatchObserver = null
+  let pinWatchTimer = null
+
+  function stopPinWatch() {
+    if (pinWatchObserver) { pinWatchObserver.disconnect(); pinWatchObserver = null }
+    if (pinWatchTimer) { clearTimeout(pinWatchTimer); pinWatchTimer = null }
+  }
+
+  function sendTaskComplete(resultUrl) {
+    if (taskCompleted) return
+    taskCompleted = true
+    stopPinWatch()
+    chrome.runtime.sendMessage({ type: 'TASK_COMPLETE', resultUrl }).catch(() => {})
+  }
+
+  function watchForPublishedPin() {
+    stopPinWatch()
+    const check = () => {
+      const viewPinEl = findViewPinAction()
+      if (!viewPinEl) return
+      const url = viewPinEl.href || findPublishedPinUrl() || window.location.href
+      console.log(`[FieldAgent] post-publish: found View Pin action, resultUrl=${url}`)
+      if (!reactFiberClick(viewPinEl)) viewPinEl.click()
+      sendTaskComplete(url)
+    }
+    check()
+    if (taskCompleted) return
+    pinWatchObserver = new MutationObserver(check)
+    pinWatchObserver.observe(document.body, { childList: true, subtree: true })
+    // Pinterest's success toast typically fades within a few seconds — stop
+    // watching well after that so the observer doesn't run indefinitely.
+    pinWatchTimer = setTimeout(stopPinWatch, 15000)
+  }
+
   // Reset per-task state when the active task changes.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !('activeTask' in changes)) return
@@ -46,6 +91,8 @@
     if (!next || (prev && prev.task_id !== next.task_id)) {
       taskStartUrl = null
       allowPostNavInspect = false
+      taskCompleted = false
+      stopPinWatch()
       chrome.storage.local.remove('lastInspectResult').catch(() => {})
     }
   })
@@ -76,6 +123,7 @@
     const text = (btn.textContent?.trim() || btn.getAttribute('aria-label') || '').toLowerCase()
     if (text === 'publish' || text === 'post') {
       allowPostNavInspect = true
+      watchForPublishedPin()
       // Fallback: if Pinterest stays on the same URL (no pushState), inspect in
       // place after 4 s to catch success banners.
       setTimeout(() => {
@@ -980,11 +1028,10 @@
       })
 
       if (result.status === 'complete') {
-        // Agent detected a success/confirmation page — mark the task done
-        chrome.runtime.sendMessage({
-          type: 'TASK_COMPLETE',
-          resultUrl: window.location.href,
-        }).catch(() => {})
+        // Agent detected a success/confirmation page — mark the task done.
+        // Prefer the real pin permalink (from a "View Pin" link) over the
+        // current URL, which is often still the pin-builder page.
+        sendTaskComplete(findPublishedPinUrl() || window.location.href)
         return
       }
 
